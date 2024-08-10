@@ -39,33 +39,13 @@ class Snapshot(SimSnap):
         self.__set_load_particle()
         self.subhalos=subhalos(self)
         self.halos=halos(self)
+        self.__canloadPT=True
         self.__PT_loaded={'Halo':set(),
                         'Subhalo':set()}
         
         self.__GC_loaded={'Halo':set(),
                             'Subhalo':set()}
     
-    def _autoconvert_array_unit(self, ar, dims=None, ucut=3):
-        """Given an array ar, convert its units such that the new units span
-        dims[:ucut]. dims[ucut:] are evaluated in the conversion (so will be things like
-        a, h etc).
-
-        If dims is None, use the internal autoconvert state to perform the conversion."""
-
-        if dims is None:
-            dims = self.ancestor._autoconvert
-        if dims is None:
-            return
-        if (ar.units is not None) and (ar.units is not units.no_unit):
-            try:
-                d = ar.units.dimensional_project(dims)
-            except units.UnitsException:
-                return
-            new_unit = reduce(lambda x, y: x * y, [
-                              a ** b for a, b in zip(dims, d[:ucut])])
-            if new_unit != ar.units:
-
-                ar.convert_units(new_unit)
 
     def physical_units(self, persistent=True):
 
@@ -115,28 +95,35 @@ class Snapshot(SimSnap):
             self.__GC_loaded['Halo'].add(int(i))
 
     def load_halo(self,haloID):
-        self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
-        self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
-        f=self.load_particle(ID=haloID,groupType='Halo')
+        if haloID in self.__PT_loaded['Halo']:
+            print(haloID, ' was already loaded into this Snapshot')
+            return
+        if self.__canloadPT:
+            self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
+            self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
+            f=self.load_particle(ID=haloID,groupType='Halo')
 
-        fmerge=Simsnap_merge(self,f)
-        Simsnap_cover(self,fmerge)
+            fmerge=Simsnap_merge(self,f)
+            Simsnap_cover(self,fmerge)
 
-        ind = np.empty((len(self),), dtype='int8')
-        for i, f in enumerate(self.ancestor.families()):
-            ind[self._get_family_slice(f)] = i
+            ind = np.empty((len(self),), dtype='int8')
+            for i, f in enumerate(self.ancestor.families()):
+                ind[self._get_family_slice(f)] = i
 
-        self._family_index_cached = ind
-        self.halos[haloID]._load_GC()
-        self.subhalos.update()
-        self.halos.update()
-        self.__PT_loaded['Halo'].add(haloID)
-        self.__GC_loaded['Halo'].add(haloID)
-        if self.halos[haloID].GC['GroupFirstSub'] != -1:
-            for i in range(self.halos[haloID].GC['GroupFirstSub'],
-                           self.halos[haloID].GC['GroupFirstSub']+self.halos[haloID].GC['GroupNsubs']):
-                self.__PT_loaded['Subhalo'].add(i)
-            
+            self._family_index_cached = ind
+            self.halos[haloID]._load_GC()
+            self.subhalos.update()
+            self.halos.update()
+            self.__PT_loaded['Halo'].add(haloID)
+            self.__GC_loaded['Halo'].add(haloID)
+            if self.halos[haloID].GC['GroupFirstSub'] != -1:
+                for i in range(self.halos[haloID].GC['GroupFirstSub'],
+                            self.halos[haloID].GC['GroupFirstSub']+self.halos[haloID].GC['GroupNsubs']):
+                    self.__PT_loaded['Subhalo'].add(i)
+        else:
+            print('The pos and vel of the snapshot particles') 
+            print('are not in the coordinate system in the original box.')
+            print('No new particles can be loaded')
 
     
 
@@ -164,28 +151,31 @@ class Snapshot(SimSnap):
                 print('No particle has this SubhaloID.')
                 print('So here match this subhalo particle and modify their SubhaloID')
                 self.match_subhalo(subhaloID)
+            return
+        if self.__canloadPT:
+            self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
+            self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
+            f=self.load_particle(ID=subhaloID,groupType='Subhalo')
 
 
-        
-        self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
-        self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
-        f=self.load_particle(ID=subhaloID,groupType='Subhalo')
+            fmerge=Simsnap_merge(self,f)
+            Simsnap_cover(self,fmerge)
 
+            ind = np.empty((len(self),), dtype='int8')
+            for i, f in enumerate(self.ancestor.families()):
+                ind[self._get_family_slice(f)] = i
+            self._family_index_cached = ind
 
-        fmerge=Simsnap_merge(self,f)
-        Simsnap_cover(self,fmerge)
-
-        ind = np.empty((len(self),), dtype='int8')
-        for i, f in enumerate(self.ancestor.families()):
-            ind[self._get_family_slice(f)] = i
-        self._family_index_cached = ind
-
-        self.subhalos[subhaloID]._load_GC()
-        self['HaloID'][self['SubhaloID']==subhaloID]=self.subhalos[subhaloID].GC['SubhaloGrNr']
-        self.subhalos.update()
-        self.halos.update()
-        self.__PT_loaded['Subhalo'].add(subhaloID)
-        self.__GC_loaded['Subhalo'].add(subhaloID)
+            self.subhalos[subhaloID]._load_GC()
+            self['HaloID'][self['SubhaloID']==subhaloID]=self.subhalos[subhaloID].GC['SubhaloGrNr']
+            self.subhalos.update()
+            self.halos.update()
+            self.__PT_loaded['Subhalo'].add(subhaloID)
+            self.__GC_loaded['Subhalo'].add(subhaloID)
+        else:
+            print('The pos and vel of the snapshot particles') 
+            print('are not in the coordinate system in the original box.')
+            print('No new particles can be loaded')
     
     
     def load_particle(self,ID,groupType='Subhalo'):
@@ -266,20 +256,38 @@ class Snapshot(SimSnap):
 
 
     def target_acceleration(self,targetpos):
+        try:
+            eps=self.properties.get('eps',0)
+        except:
+            eps=0
+        if eps==0:
+            print('Calculate the gravity without softening length')
         accelr=AccelTarget(targetpos,self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(self.eps,len(targetpos)).view(np.ndarray))
+                  np.repeat(eps,len(targetpos)).view(np.ndarray))
         acc=SimArray(accelr,units.G*self['mass'].units/self['pos'].units/self['pos'].units)
         acc.sim=self
         return acc
 
     
     def target_potential(self,targetpos):
+        try:
+            eps=self.properties.get('eps',0)
+        except:
+            eps=0
+        if eps==0:
+            print('Calculate the gravity without softening length')
         pot=PotentialTarget(targetpos,self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(self.eps,len(targetpos)).view(np.ndarray))
+                  np.repeat(eps,len(targetpos)).view(np.ndarray))
         phi=SimArray(pot,units.G*self['mass'].units/self['pos'].units)
         phi.sim=self
         return phi
+    
 
+
+    def wrap(self,boxsize=None, convention='center'):
+        super().wrap(boxsize, convention)
+        self.__canloadPT=False
+    
 
 
     def _PT_potential(self):
@@ -293,9 +301,14 @@ class Snapshot(SimSnap):
             print('Calculate by using Octree')
         else:
             print('Calculate by using brute force')
-
+        try:
+            eps=self.properties.get('eps',0)
+        except:
+            eps=0
+        if eps==0:
+            print('Calculate the gravity without softening length')
         pot=Potential(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(self.eps,len(self['mass'])).view(np.ndarray))
+                  np.repeat(eps,len(self['mass'])).view(np.ndarray))
         phi=SimArray(pot,units.G*self['mass'].units/self['pos'].units)
         self['phi']=phi
         
@@ -311,9 +324,14 @@ class Snapshot(SimSnap):
             print('Calculate by using Octree')
         else:
             print('Calculate by using brute force')
-
+        try:
+            eps=self.properties.get('eps',0)
+        except:
+            eps=0
+        if eps==0:
+            print('Calculate the gravity without softening length')
         accelr=Accel(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(self.eps,len(self['mass'])).view(np.ndarray))
+                  np.repeat(eps,len(self['mass'])).view(np.ndarray))
         acc=SimArray(accelr,units.G*self['mass'].units/self['pos'].units/self['pos'].units)
         self['acc']=acc
 
@@ -344,7 +362,27 @@ class Snapshot(SimSnap):
         pa['bh_fields']=[]
         self.load_particle_para=pa
 
+    def _autoconvert_array_unit(self, ar, dims=None, ucut=3):
+        """Given an array ar, convert its units such that the new units span
+        dims[:ucut]. dims[ucut:] are evaluated in the conversion (so will be things like
+        a, h etc).
 
+        If dims is None, use the internal autoconvert state to perform the conversion."""
+
+        if dims is None:
+            dims = self.ancestor._autoconvert
+        if dims is None:
+            return
+        if (ar.units is not None) and (ar.units is not units.no_unit):
+            try:
+                d = ar.units.dimensional_project(dims)
+            except units.UnitsException:
+                return
+            new_unit = reduce(lambda x, y: x * y, [
+                              a ** b for a, b in zip(dims, d[:ucut])])
+            if new_unit != ar.units:
+
+                ar.convert_units(new_unit)
 
 
     def _a_dot(self):
@@ -359,14 +397,87 @@ class Snapshot(SimSnap):
     @derived_array
     def acc(self) :
         if 'acc' not in self.keys():
-            self._PT_acceleration()
+            print('There is no acc in the keyword')
+            if ('mass' in self.keys()) and ('pos' in self.keys()):
+                self._PT_acceleration()
+            else:
+                print('\'acc\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
+                return
+
         return self['acc']
 
     @derived_array
     def phi(self) :
         if 'phi' not in self.keys():
-            self._PT_potential()
+            print('There is no phi in the keyword')
+            if ('mass' in self.keys()) and ('pos' in self.keys()):
+                self._PT_potential()
+            else:
+                print('\'phi\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
+                return 
         return self['phi']
+    
+
+    @property
+    def status_loadPT(self):
+        if self.__canloadPT:
+            return 'able'
+        else:
+            return 'locked'
+        
+    
+    @property
+    def vel_center(self,):
+        pass
+
+    @property
+    def center(self,mode='pot'):
+        '''
+        The position center of this snapshot
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
+            
+        The centering scheme is determined by the ``mode`` keyword. As well as the
+        The following centring modes are available:
+
+        *  *pot*: potential minimum
+
+        *  *com*: center of mass
+
+        *  *ssc*: shrink sphere center
+
+        *  *hyb*: for most halos, returns the same as ssc, 
+                but works faster by starting iteration near potential minimum
+
+        Before the main centring routine is called, the snapshot is translated so that the
+        halo is already near the origin. The box is then wrapped so that halos on the edge
+        of the box are handled correctly.
+        '''
+        if mode=='pot':
+            i = self["phi"].argmin()
+            return self["pos"][i].copy()
+        if mode=='com':
+            return self.mean_by_mass('pos')
+        if mode=='ssc':
+            from pynbody.analysis.halo import shrink_sphere_center
+            return shrink_sphere_center(self)
+        if mode=='hyb':
+            from pynbody.analysis.halo import hybrid_center
+            return hybrid_center(self)
+        print('No such mode')
+
+        return 
+
+    
+    @property
+    def cosmology(self):
+        cos={}
+        cos['h']=self.properties.get('h')
+        cos['omegaM0']=self.properties.get('omegaM0')
+        cos['omegaL0']=self.properties.get('omegaL0')
+        cos['omegaB0']=self.properties.get('omegaB0')
+        cos['sigma8']=self.properties.get('sigma8')
+        cos['ns']=self.properties.get('ns')
+        return cos
 
     @property
     def GC_loaded_Subhalo(self):
