@@ -1,12 +1,12 @@
 from pynbody.snapshot import SimSnap
-from pynbody import derived_array
-from illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
-from TNGsnapshot import *
-from TNGunits import *
-from TNGsubhalo import subhalos
-from TNGhalo import halos
+from pynbody import derived_array,filt
+from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
+from AnastrisTNG.TNGsnapshot import *
+from AnastrisTNG.TNGunits import *
+from AnastrisTNG.TNGsubhalo import subhalos
+from AnastrisTNG.TNGhalo import halos
 from functools import reduce
-from pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
+from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
     
 class Snapshot(SimSnap):
 
@@ -284,18 +284,40 @@ class Snapshot(SimSnap):
     
 
 
-    def wrap(self,boxsize=None, convention='center'):
-        super().wrap(boxsize, convention)
-        self.__canloadPT=False
     
 
+
+    def wrap(self,boxsize=None, convention='center'):
+        
+        super().wrap(boxsize, convention)
+        self.__canloadPT=False
+
+        print('It involves a change of coordinates')
+        print('Can\'t load new particles in this Snapshot')
+
+    
+    def check_boundary(self):
+        if (self['x'].max()-self['x'].min())>(self.boxsize/2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+        if (self['y'].max()-self['y'].min())>(self.boxsize/2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+        if (self['z'].max()-self['z'].min())>(self.boxsize/2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+
+        return
 
     def _PT_potential(self):
         '''
         Calculate the potential for each particle
         https://github.com/mikegrudic/pytreegrav
         '''
-
+        self.check_boundary()
         print('Calculating gravity and it will take tens of seconds')
         if len(self['mass'])>1000:
             print('Calculate by using Octree')
@@ -311,7 +333,7 @@ class Snapshot(SimSnap):
                   np.repeat(eps,len(self['mass'])).view(np.ndarray))
         phi=SimArray(pot,units.G*self['mass'].units/self['pos'].units)
         self['phi']=phi
-        
+        self.__canloadPT=False
         return self['phi']
     
     def _PT_acceleration(self):
@@ -319,7 +341,7 @@ class Snapshot(SimSnap):
         Calculate the acceleration for each particle
         https://github.com/mikegrudic/pytreegrav
         '''
-
+        self.check_boundary()
         if len(self['mass'])>1000:
             print('Calculate by using Octree')
         else:
@@ -334,7 +356,8 @@ class Snapshot(SimSnap):
                   np.repeat(eps,len(self['mass'])).view(np.ndarray))
         acc=SimArray(accelr,units.G*self['mass'].units/self['pos'].units/self['pos'].units)
         self['acc']=acc
-
+        self.__canloadPT=False
+        return self['acc']
 
     def __repr__(self):
         return "<Snapshot \"" + self.filename + "\" len=" + str(len(self)) + ">"
@@ -420,17 +443,49 @@ class Snapshot(SimSnap):
 
     @property
     def status_loadPT(self):
+        '''
+        Check the ability of this snapshot to load new particles
+        '''
+
         if self.__canloadPT:
             return 'able'
         else:
             return 'locked'
         
     
-    @property
-    def vel_center(self,):
-        pass
 
-    @property
+    def vel_center(self,mode='pot',pos=None,r_cal='1 kpc'):
+        '''
+        The center velocity.
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
+
+        ``mode`` used to cal center pos see ``center``
+        ``pos``  Specified position.
+        ``r_cal`` The size of the sphere to use for the velocity calculate
+
+        '''
+
+
+        if pos==None:
+            pos=self.center(mode)
+
+        cen = self.s[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # fall-back to DM
+            cen = self.dm[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # fall-back to gas
+            cen = self.g[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # very weird snapshot, or mis-centering!
+            raise ValueError("Insufficient particles around center to get velocity")
+
+        vcen = (cen['vel'].transpose() * cen['mass']).sum(axis=1)/cen['mass'].sum()
+        vcen.units = cen['vel'].units
+
+        return vcen
+
+
     def center(self,mode='pot'):
         '''
         The position center of this snapshot
@@ -453,6 +508,8 @@ class Snapshot(SimSnap):
         of the box are handled correctly.
         '''
         if mode=='pot':
+         #   if 'phi' not in self.keys():
+          #      phi=self['phi']
             i = self["phi"].argmin()
             return self["pos"][i].copy()
         if mode=='com':
@@ -461,6 +518,8 @@ class Snapshot(SimSnap):
             from pynbody.analysis.halo import shrink_sphere_center
             return shrink_sphere_center(self)
         if mode=='hyb':
+        #    if 'phi' not in self.keys():
+         #       phi=self['phi']
             from pynbody.analysis.halo import hybrid_center
             return hybrid_center(self)
         print('No such mode')

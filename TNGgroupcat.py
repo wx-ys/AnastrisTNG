@@ -1,11 +1,11 @@
 
 
-from illustris_python.groupcat import loadSingle
+from AnastrisTNG.illustris_python.groupcat import loadSingle
 
 from pynbody.array import SimArray 
-from TNGunits import GroupcatUnits,HaloPaName,SubhaloPaName
+from AnastrisTNG.TNGunits import GroupcatUnits,HaloPaName,SubhaloPaName
 from pynbody import simdict
-from TNGsnapshot import get_Snapshot_property
+from AnastrisTNG.TNGsnapshot import get_Snapshot_property
 
 def get_Subhalo_property(BasePath,Snap,subhaloID):
 

@@ -1,9 +1,9 @@
 from pynbody import simdict,units,family
 from pynbody.snapshot import new
 import types
-from illustris_python.groupcat import loadHeader
+from AnastrisTNG.illustris_python.groupcat import loadHeader
 from pynbody.array import SimArray
-from TNGunits import illustrisTNGruns
+from AnastrisTNG.TNGunits import illustrisTNGruns
 import numpy as np
 
 def Simsnap_cover(f1,f2):

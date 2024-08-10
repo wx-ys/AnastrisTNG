@@ -1,8 +1,8 @@
 import numpy as np
-from TNGgroupcat import haloproperties
+from AnastrisTNG.TNGgroupcat import haloproperties
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
-from pynbody import units
+from pynbody import units,filt
 from functools import reduce
 
 
@@ -47,6 +47,85 @@ class Halo:
                               a ** b for a, b in zip(dims, d[:urc])])
                     if new_unit != v.units:
                         self.GC[k].convert_units(new_unit)
+
+    def vel_center(self,mode='pot',pos=None,r_cal='1 kpc'):
+        '''
+        The center velocity.
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
+
+        ``mode`` used to cal center pos see ``center``
+        ``pos``  Specified position.
+        ``r_cal`` The size of the sphere to use for the velocity calculate
+
+        '''
+        if self.__check_paticles():
+            print('No particles loaded in this Halo')
+            return
+
+        if pos==None:
+            pos=self.center(mode)
+
+        cen = self.PT.s[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # fall-back to DM
+            cen = self.PT.dm[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # fall-back to gas
+            cen = self.PT.g[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
+            # very weird snapshot, or mis-centering!
+            raise ValueError("Insufficient particles around center to get velocity")
+
+        vcen = (cen['vel'].transpose() * cen['mass']).sum(axis=1)/cen['mass'].sum()
+        vcen.units = cen['vel'].units
+
+        return vcen
+
+
+    def center(self,mode='pot'):
+        '''
+        The position center of this snapshot
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
+            
+        The centering scheme is determined by the ``mode`` keyword. As well as the
+        The following centring modes are available:
+
+        *  *pot*: potential minimum
+
+        *  *com*: center of mass
+
+        *  *ssc*: shrink sphere center
+
+        *  *hyb*: for most halos, returns the same as ssc, 
+                but works faster by starting iteration near potential minimum
+
+        Before the main centring routine is called, the snapshot is translated so that the
+        halo is already near the origin. The box is then wrapped so that halos on the edge
+        of the box are handled correctly.
+        '''
+        if self.__check_paticles():
+            print('No particles loaded in this Halo')
+            return
+        if mode=='pot':
+         #   if 'phi' not in self.keys():
+          #      phi=self['phi']
+            i = self.PT["phi"].argmin()
+            return self.PT["pos"][i].copy()
+        if mode=='com':
+            return self.mean_by_mass('pos')
+        if mode=='ssc':
+            from pynbody.analysis.halo import shrink_sphere_center
+            return shrink_sphere_center(self.PT)
+        if mode=='hyb':
+        #    if 'phi' not in self.keys():
+         #       phi=self['phi']
+            from pynbody.analysis.halo import hybrid_center
+            return hybrid_center(self.PT)
+        print('No such mode')
+
+        return 
+
+    
     def wrap(self,boxsize=None, convention='center'):
         self.PT.ancestor.wrap(boxsize,convention)
 
@@ -61,6 +140,12 @@ class Halo:
 
     def transform(self, matrix):
         self.PT.ancestor.transform(matrix)
+
+    def __check_paticles(self):
+        if len(self.PT)>0:
+            return False
+        else:
+            return True
 
     def _transform(self, matrix):
         self.PT.ancestor._transform(matrix)
