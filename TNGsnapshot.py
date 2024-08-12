@@ -5,7 +5,189 @@ from AnastrisTNG.illustris_python.groupcat import loadHeader
 from pynbody.array import SimArray
 from AnastrisTNG.TNGunits import illustrisTNGruns
 import numpy as np
+from pynbody.analysis.profile import Profile
+from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
 
+def cal_potential(sim,targetpos):
+    try:
+        eps=sim.properties.get('eps',0)
+    except:
+        eps=0
+    if eps==0:
+        print('Calculate the gravity without softening length')
+    pot=PotentialTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
+                np.repeat(eps,len(targetpos)).view(np.ndarray))
+    phi=SimArray(pot,units.G*sim['mass'].units/sim['pos'].units)
+    phi.sim=sim
+    return phi
+def cal_acceleration(sim,targetpos):
+        try:
+            eps=sim.properties.get('eps',0)
+        except:
+            eps=0
+        if eps==0:
+            print('Calculate the gravity without softening length')
+        accelr=AccelTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
+                  np.repeat(eps,len(targetpos)).view(np.ndarray))
+        acc=SimArray(accelr,units.G*sim['mass'].units/sim['pos'].units/sim['pos'].units)
+        acc.sim=sim
+        return acc
+
+class profile:
+    def __init__(self,sim,ndim=2,type='lin',nbins=100,rmin=0.1,rmax=100.,**kwargs):
+        
+        self.__Pall=Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pstar=Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pgas=Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pdm=Profile(sim.dm,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+
+        
+        self.__properties={}
+        self.__properties['Qgas']=self.Qgas
+        self.__properties['Qstar']=self.Qstar
+        self.__properties['Q2ws']=self.Q2ws
+        self.__properties['Q2thin']=self.Q2thin
+        self.__properties['Q2thick']=self.Q2thick
+
+
+
+        def v_circ(p,grav_sim=None):
+            """Circular velocity, i.e. rotation curve. Calculated by computing the gravity
+            in the midplane - can be expensive"""
+            #print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
+            grav_sim = grav_sim or p.sim
+            cal_2=np.sqrt(2)/2
+            basearray=np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
+                                (cal_2,cal_2,0),(-cal_2,cal_2,0),
+                                (cal_2,-cal_2,0),(-cal_2,-cal_2,0)])
+            R=p['rbins'].in_units('kpc').copy()
+            POS=np.array([(0,0,0)])
+            for j in R:
+                binsr=basearray*j
+                POS=np.concatenate((POS,binsr),axis=0)
+            POS=SimArray(POS,R.units)
+            ac=cal_acceleration(grav_sim,POS)
+            ac.convert_units('kpc Gyr**-2')
+            POS.convert_units('kpc')
+            velall=np.diag(np.dot(ac-ac[0],-POS.T))
+            velall.units=units.kpc**2/units.Gyr**2
+            velTrue=np.zeros(len(R))
+            for i in range(len(R)):
+                velTrue[i]=np.mean(velall[i+1:8*(i+1)+1])
+            velTrue[velTrue<0]=0
+            velTrue=np.sqrt(velTrue)
+            velTrue=SimArray(velTrue,units.kpc/units.Gyr)
+            velTrue.convert_units('km s**-1')
+            velTrue.sim=grav_sim.ancestor
+            return velTrue
+        def pot(p,grav_sim=None):
+            grav_sim = grav_sim or p.sim
+            cal_2=np.sqrt(2)/2
+            basearray=np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
+                                (cal_2,cal_2,0),(-cal_2,cal_2,0),
+                                (cal_2,-cal_2,0),(-cal_2,-cal_2,0)])
+            R=p['rbins'].in_units('kpc').copy()
+            POS=np.array([(0,0,0)])
+            for j in R:
+                binsr=basearray*j
+                POS=np.concatenate((POS,binsr),axis=0)
+            POS=SimArray(POS,R.units)
+            po=cal_potential(grav_sim,POS)
+            po.conver_units('km**2 s**-2')
+            poall=np.zeros(len(R))
+            for i in range(len(R)):
+                poall[i]=np.mean(po[i+1:8*(i+1)+1])
+            
+            poall=SimArray(poall,po.units)
+            poall.sim=grav_sim.ancestor
+            return poall
+
+        def omega(p):
+            """Circular frequency Omega = v_circ/radius (see Binney & Tremaine Sect. 3.2)"""
+            prof = p['v_circ'] / p['rbins']
+            prof.convert_units('km s**-1 kpc**-1')
+            return prof
+        self.__Pall._profile_registry[v_circ.__name__]=v_circ
+        self.__Pall._profile_registry[omega.__name__]=omega
+        self.__Pall._profile_registry[pot.__name__]=pot
+
+        self.__Pstar._profile_registry[v_circ.__name__]=v_circ
+        self.__Pstar._profile_registry[omega.__name__]=omega
+        self.__Pstar._profile_registry[pot.__name__]=pot
+
+        self.__Pgas._profile_registry[v_circ.__name__]=v_circ
+        self.__Pgas._profile_registry[omega.__name__]=omega
+        self.__Pgas._profile_registry[pot.__name__]=pot
+
+        self.__Pdm._profile_registry[v_circ.__name__]=v_circ
+        self.__Pdm._profile_registry[omega.__name__]=omega
+        self.__Pdm._profile_registry[pot.__name__]=pot
+    
+    def __getitem__(self, key):
+        
+        if isinstance(key,str):
+            ks=key.split('-')
+            if len(ks)>1:
+                if set(['star','s','Star']) & set(ks):
+                    return self.__Pstar[ks[0]]
+                if set(['gas','g','Gas']) & set(ks):
+                    return self.__Pgas[ks[0]]
+                if set(['dm','darkmatter','DM']) & set(ks):
+                    return self.__Pdm[ks[0]]
+                if set(['all','ALL']) & set(ks):
+                    return self.__Pstar[ks[0]]
+            else:
+                if key in self.__properties:
+                    return self.__properties[key]()
+                else:
+                    return self.__Pall[key]
+        else:
+            print('Type error, should input a str')
+            return
+    def Qgas(self):
+        '''
+        Toomre-Q for gas
+        '''
+        return (self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+    def Qstar(self):
+        '''
+        Toomre-Q parameter
+        '''
+        return (self.__Pall['kappa']*self.__Pstar['vr_disp']/(3.36 * self.__Pstar['density'] * units.G)).in_units("")
+    def Q2ws(self):
+        '''
+        Toomre Q of two component. Wang & Silk (1994)
+        '''
+        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        return (Qs*Qg)/(Qs+Qg)
+    def Q2thin(self):
+        '''
+        The effective Q of two component thin disk. Romeo & Wiegert (2011) eq. 6.
+        '''
+        w=(2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
+        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+
+        q=[Qs*Qg/(Qs+w*Qg)]
+        return [Qs[i]*Qg[i]/(Qs[i]+w[i]*Qg[i]) if Qs[i]>Qg[i] else Qs[i]*Qg[i]/(w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
+    def Q2thick(self):
+        '''
+        The effective Q of two component thick disk. Romeo & Wiegert (2011) eq. 9. 
+        '''
+        w=(2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
+        Ts=0.8+0.7*(self.__Pstar['vz_disp']/self.__Pstar['vr_disp']).in_units("")
+        Tg=0.8+0.7*(self.__Pgas['vz_disp']/self.__Pgas['vr_disp']).in_units("")
+        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        Qs=Qs*Ts
+        Qg=Qg*Tg
+        return [Qs[i]*Qg[i]/(Qs[i]+w[i]*Qg[i]) if Qs[i]>Qg[i] else Qs[i]*Qg[i]/(w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
+
+
+
+
+##merge two simsnap and cover
 
 def Simsnap_cover(f1,f2):
     f1._num_particles=len(f2)
@@ -132,28 +314,6 @@ def get_Snapshot_property(BasePath,Snap):
     Snapshot['Snapshot']=Snap
     return Snapshot
 
-'''
-
-def set_Snapshot_property(f,BasePath,Snap):
-    SnapshotHeader=loadHeader(BasePath,Snap)
-    Snapshot(f)
-    f.Snapshot['read_Snap_properties']=SnapshotHeader
-    for i in f.Snapshot.keys():
-        if 'sim' in dir(f.Snapshot[i]):
-            f.Snapshot[i].sim=f
-    f.Snapshot['filepath']=BasePath
-    f.Snapshot['Snapshot']=Snap
-    f.properties=f.Snapshot
-
-
-
-def Snapshot(f):
-    if 'Snapshot' in dir(f):
-        pass
-    else:
-        f.__setattr__('Snapshot',simdict.SimDict())
-    return f.Snapshot
-'''
 
 
 def get_eps_Mdm(Snapshot):
@@ -185,8 +345,7 @@ def get_eps_Mdm(Snapshot):
         return SimArray(MatchRun[Snapshot.run][0]/2,units.kpc/units.h),SimArray(MatchRun[Snapshot.run][1],1e10*units.Msol/units.h)
     
 
-
-
+#some deride_property
 
 # all
 @derived_array

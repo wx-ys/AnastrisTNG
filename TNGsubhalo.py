@@ -19,10 +19,6 @@ class Subhalo:
             self.PT=simarray.ancestor[simarray.ancestor['SubhaloID']==self.GC['SubhaloID']]
             self.PT._descriptor='Subhalo'+'_'+simarray.filename.split('_')[-1]
         
-
-
-
-
     def _load_GC(self):
         proper=subhaloproperties(self.GC['filedir'],
                                  self.GC['Snapshot'],
@@ -62,7 +58,7 @@ class Subhalo:
                         self.GC[k].convert_units(new_unit)
 
 
-    def vel_center(self,mode='pot',pos=None,r_cal='1 kpc'):
+    def vel_center(self,mode='com',pos=None,r_cal='1 kpc'):
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
@@ -96,7 +92,7 @@ class Subhalo:
         return vcen
 
 
-    def center(self,mode='pot'):
+    def center(self,mode='com'):
         '''
         The position center of this snapshot
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
@@ -126,7 +122,7 @@ class Subhalo:
             i = self.PT["phi"].argmin()
             return self.PT["pos"][i].copy()
         if mode=='com':
-            return self.mean_by_mass('pos')
+            return self.PT.mean_by_mass('pos')
         if mode=='ssc':
             from pynbody.analysis.halo import shrink_sphere_center
             return shrink_sphere_center(self.PT)
@@ -154,6 +150,18 @@ class Subhalo:
 
     def transform(self, matrix):
         self.PT.ancestor.transform(matrix)
+
+
+
+
+
+
+            
+        
+
+    
+
+
     def __check_paticles(self):
         if len(self.PT)>0:
             return False

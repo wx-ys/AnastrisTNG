@@ -1,12 +1,12 @@
 from pynbody.snapshot import SimSnap
 from pynbody import derived_array,filt
+from pynbody.analysis.profile import Profile
 from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGsubhalo import subhalos
 from AnastrisTNG.TNGhalo import halos
 from functools import reduce
-from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
     
 class Snapshot(SimSnap):
 
@@ -49,7 +49,28 @@ class Snapshot(SimSnap):
         self.__pos.sim=self
         self.__vel=SimArray([0.,0.,0.],units.km/units.s)
         self.__vel.sim=self
+        self.__phi=SimArray([0.,0.,0.],units.km**2/units.s**2)
+        self.__phi.sim=self
+        self.__acc=SimArray([0.,0.,0.],units.km/units.s**2)
+        self.__acc.sim=self
         self.__init_stable_array()
+
+    @staticmethod
+    def profile(sim,ndim=2,type='lin',nbins=100,**kwargs):
+        pr=Profile(sim,ndim=ndim,type=type,nbins=nbins,**kwargs)
+        
+        def test_something(self):
+
+            return self['rbins']
+
+        
+        pr._profile_registry[test_something.__name__]=test_something
+        return pr
+
+
+
+    
+
 
     def physical_units(self, persistent=True):
 
@@ -461,6 +482,10 @@ class Snapshot(SimSnap):
             return 'locked'
         
     def shift(self,pos=None,vel=None):
+        '''
+        shift to the specific position
+        then set its pos, vel, phi, acc to 0.
+        '''
         
         if pos is not None:
             self['pos']-=pos
@@ -468,15 +493,24 @@ class Snapshot(SimSnap):
         if vel is not None:
             self['vel']-=vel
             self.__vel+=vel
+        if 'phi' in self.keys():
+            thephi=self.target_potential(np.array([[0,0,0],pos]))[1]
+            self['phi']-=thephi
+            self.__phi+=thephi
+
+        if 'acc' in self.keys():
+            theacc=self.target_acceleration(np.array([[0,0,0],pos]))[1]
+            self['acc']-=theacc
+            self.__acc+=theacc
 
 
     def get_origin_inbox(self):
         
-        return self.__pos.copy(),self.__vel.copy()
+        return self.__pos.copy(),self.__vel.copy(),self.__acc.copy(),self.__phi.copy()
 
 
 
-    def vel_center(self,mode='pot',pos=None,r_cal='1 kpc'):
+    def vel_center(self,mode='com',pos=None,r_cal='1 kpc'):
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
@@ -508,7 +542,7 @@ class Snapshot(SimSnap):
         return vcen
 
 
-    def center(self,mode='pot'):
+    def center(self,mode='com'):
         '''
         The position center of this snapshot
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
