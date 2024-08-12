@@ -45,7 +45,11 @@ class Snapshot(SimSnap):
         
         self.__GC_loaded={'Halo':set(),
                             'Subhalo':set()}
-    
+        self.__pos=SimArray([0.,0.,0.],units.kpc)
+        self.__pos.sim=self
+        self.__vel=SimArray([0.,0.,0.],units.km/units.s)
+        self.__vel.sim=self
+        self.__init_stable_array()
 
     def physical_units(self, persistent=True):
 
@@ -53,7 +57,10 @@ class Snapshot(SimSnap):
         urc=len(dims)-2
         all = list(self._arrays.values())
         for x in self._family_arrays:
-            all += list(self._family_arrays[x].values())
+            if x in ['nH','Halpha','em','ne','temp','mu','c_n_sq','p','cs','c_s','acc','phi']:
+                continue
+            else:
+                all += list(self._family_arrays[x].values())
 
         for ar in all:
             self._autoconvert_array_unit(ar.ancestor, dims,urc)
@@ -329,10 +336,12 @@ class Snapshot(SimSnap):
             eps=0
         if eps==0:
             print('Calculate the gravity without softening length')
+       # self.physical_units()
         pot=Potential(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
                   np.repeat(eps,len(self['mass'])).view(np.ndarray))
         phi=SimArray(pot,units.G*self['mass'].units/self['pos'].units)
         self['phi']=phi
+        self['phi'].convert_units('km**2 s**-2')
         self.__canloadPT=False
         return self['phi']
     
@@ -352,12 +361,33 @@ class Snapshot(SimSnap):
             eps=0
         if eps==0:
             print('Calculate the gravity without softening length')
+      #  self.physical_units()
         accelr=Accel(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
                   np.repeat(eps,len(self['mass'])).view(np.ndarray))
         acc=SimArray(accelr,units.G*self['mass'].units/self['pos'].units/self['pos'].units)
         self['acc']=acc
         self.__canloadPT=False
+        self['acc'].convert_units('km s^-1 Gyr^-1')
         return self['acc']
+
+    def __init_stable_array(self):
+        if '_derived_quantity_registry' in dir(self):
+            self._derived_quantity_registry[phi.__name__]=phi
+            self._derived_quantity_registry[phi.__name__] = phi
+            phi.__stable__=True
+
+            self._derived_quantity_registry[acc.__name__]=acc
+            self._derived_quantity_registry[acc.__name__] = acc
+            acc.__stable__=True
+            return
+        if '_derived_array_registry' in dir(self):
+            self._derived_quantity_registry[phi.__name__]=phi
+            self._derived_quantity_registry[phi.__name__] = phi
+            phi.__stable__=True
+
+            self._derived_quantity_registry[acc.__name__]=acc
+            self._derived_quantity_registry[acc.__name__] = acc
+            acc.__stable__=True
 
     def __repr__(self):
         return "<Snapshot \"" + self.filename + "\" len=" + str(len(self)) + ">"
@@ -417,28 +447,6 @@ class Snapshot(SimSnap):
         return  h0 * a * np.sqrt(om_m * (a ** -3) + om_k * (a ** -2) + om_l)
     
 
-    @derived_array
-    def acc(self) :
-        if 'acc' not in self.keys():
-            print('There is no acc in the keyword')
-            if ('mass' in self.keys()) and ('pos' in self.keys()):
-                self._PT_acceleration()
-            else:
-                print('\'acc\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
-                return
-
-        return self['acc']
-
-    @derived_array
-    def phi(self) :
-        if 'phi' not in self.keys():
-            print('There is no phi in the keyword')
-            if ('mass' in self.keys()) and ('pos' in self.keys()):
-                self._PT_potential()
-            else:
-                print('\'phi\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
-                return 
-        return self['phi']
     
 
     @property
@@ -452,7 +460,21 @@ class Snapshot(SimSnap):
         else:
             return 'locked'
         
-    
+    def shift(self,pos=None,vel=None):
+        
+        if pos is not None:
+            self['pos']-=pos
+            self.__pos+=pos
+        if vel is not None:
+            self['vel']-=vel
+            self.__vel+=vel
+
+
+    def get_origin_inbox(self):
+        
+        return self.__pos.copy(),self.__vel.copy()
+
+
 
     def vel_center(self,mode='pot',pos=None,r_cal='1 kpc'):
         '''
@@ -525,6 +547,7 @@ class Snapshot(SimSnap):
         print('No such mode')
 
         return 
+    
 
     
     @property
@@ -540,19 +563,19 @@ class Snapshot(SimSnap):
 
     @property
     def GC_loaded_Subhalo(self):
-        return self.__GC_loaded['Subhalo'].copy()
+        return np.sort(list(self.__GC_loaded['Subhalo'].copy()))
     
     @property
     def GC_loaded_Halo(self):
-        return self.__GC_loaded['Halo'].copy()
+        return np.sort(list(self.__GC_loaded['Halo'].copy()))
 
     @property
     def PT_loaded_Halo(self):
-        return self.__PT_loaded['Halo'].copy()
+        return np.sort(list(self.__PT_loaded['Halo'].copy()))
     
     @property
     def PT_loaded_Subhalo(self):
-        return self.__PT_loaded['Subhalo'].copy()
+        return np.sort(list(self.__PT_loaded['Subhalo'].copy()))
     
     @property
     def eps(self):

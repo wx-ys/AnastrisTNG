@@ -182,6 +182,14 @@ class subhalos:
             self._data[i].PT=self._generate_value(i) 
     
 
+    def GC(self,key):
+        k=[]
+        for i in self.__snaps.GC_loaded_Subhalo:
+            k.append(self[i].GC[key])
+        return k
+
+
+
     def _load_GC(self):
         for i in self._data.keys():
             self._data[i]._load_GC()
@@ -218,8 +226,6 @@ class subhalos:
                         self._data[el] = Subhalo(wrd)
 
             return 
-
-
 
         if isinstance(key, int):
             key = str(key)  

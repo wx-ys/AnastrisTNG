@@ -1,10 +1,11 @@
-from pynbody import simdict,units,family
+from pynbody import simdict,units,family,derived_array
 from pynbody.snapshot import new
 import types
 from AnastrisTNG.illustris_python.groupcat import loadHeader
 from pynbody.array import SimArray
 from AnastrisTNG.TNGunits import illustrisTNGruns
 import numpy as np
+
 
 def Simsnap_cover(f1,f2):
     f1._num_particles=len(f2)
@@ -182,6 +183,200 @@ def get_eps_Mdm(Snapshot):
         return SimArray(MatchRun[Snapshot.run][0],units.a*units.kpc/units.h),SimArray(MatchRun[Snapshot.run][1],1e10*units.Msol/units.h)
     else:
         return SimArray(MatchRun[Snapshot.run][0]/2,units.kpc/units.h),SimArray(MatchRun[Snapshot.run][1],1e10*units.Msol/units.h)
+    
+
+
+
+
+# all
+@derived_array
+def phi(sim) :
+    if 'phi' not in sim.keys():
+        print('There is no phi in the keyword')
+        if ('mass' in sim.keys()) and ('pos' in sim.keys()):
+            sim.ancestor._PT_potential()
+        else:
+            print('\'phi\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
+            return
+    return sim['phi']
+
+
+# all
+@derived_array
+def acc(sim) :
+    if 'acc' not in sim.keys():
+        print('There is no acc in the keyword')
+        if ('mass' in sim.keys()) and ('pos' in sim.keys()):
+            sim.ancestor._PT_acceleration()
+        else:
+            print('\'acc\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
+            return
+    return sim['acc']
+
+
+
+
+# star
+@derived_array
+def tform(sim,):
+    if 'aform' not in sim.keys():
+        print('need aform to cal: GFM_StellarFormationTime')
+    import numpy as np
+    omega_m = sim.properties['omegaM0']
+    a=sim['aform'].view(np.ndarray)
+    a[a<0]=0
+    omega_fac = np.sqrt( (1-omega_m)/omega_m ) * a**(3/2)
+    H0_kmsMpc = 100.0 * sim.ancestor.properties['h']
+    t =SimArray(2.0 * np.arcsinh(omega_fac) / (H0_kmsMpc * 3 * np.sqrt(1-omega_m)),units.Mpc/units.km*units.s)
+    t.convert_units('Gyr')
+    t[t==0]=14.
+    return t
+
+
+# star
+@derived_array
+def age(sim):
+    
+    return sim.properties['t']-sim['tform']
+
+
+
+
+
+#Refer mostly https://pynbody.readthedocs.io/latest/
+# gas
+@derived_array
+def temp(sim):
+    '''
+    TNG use two-phase ISM sub-grid model
+    the gas temperature
+    see Sec.6 of https://www.tng-project.org/data/docs/faq/  
+    '''
+    if 'u' not in sim.keys():
+        print('need gas InternalEnergy to cal: InternalEnergy')
+    gamma = 5./3
+    UnitEtoUnitM=((units.kpc/units.Gyr).in_units('km s^-1'))**2
+    T=(gamma-1)/units.k*sim['mu']*sim['u']*UnitEtoUnitM
+
+    T.convert_units('K')
+    return T
+
+#gas
+@derived_array
+def ne(sim):
+    '''
+    the electron number density
+    '''
+    n=sim['ElectronAbundance']*sim['nH'].in_units('cm^-3')
+    n.units=units.cm**-3
+    return n
+
+#gas
+@derived_array
+def em(sim) :
+    """Emission Measure (n_e^2) per particle to be integrated along LoS"""
+
+    return (sim['ne']*sim['ne']).in_units('cm^-6')
+
+
+
+#gas
+@derived_array
+def p(sim):
+    """Pressure"""
+    p = sim["u"] * sim["rho"].in_units('Msol kpc^-3') * (2. / 3)
+    p.convert_units("Pa")
+    return p
+
+@derived_array
+def cs(sim):
+    """Sound speed"""
+    return (np.sqrt(5.0 / 3.0 * units.k* sim['temp'] / sim['mu'])).in_units('km s^-1')
+
+
+@derived_array
+def c_s(self):
+    """Ideal gas sound speed based on pressure and density"""
+    #x = np.sqrt(5./3.*units.k*self['temp']*self['mu'])
+    x = np.sqrt(5. / 3. * self['p'] / self['rho'].in_units('Msol kpc^-3'))
+    x.convert_units('km s^-1')
+    return x
+
+#gas
+@derived_array
+def c_n_sq(sim) :
+    """Turbulent amplitude C_N^2 for use in SM calculations (e.g. Eqn 20 of Macquart & Koay 2013 ApJ 776 2) """
+
+    ## Spectrum of turbulence below the SPH resolution, assume Kolmogorov
+    beta = 11./3.
+    L_min = 0.1*units.Mpc
+    c_n_sq = ((beta - 3.)/((2.)*(2.*np.pi)**(4.-beta)))*L_min**(3.-beta)*sim["em"]
+    c_n_sq.units = units.m**(-20,3)
+
+    return c_n_sq
+
+
+#gas
+@derived_array
+def Halpha(sim) :
+    # Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/snapshot/gadgethdf.html#
+    """H alpha intensity (based on Emission Measure n_e^2) per particle to be integrated along LoS"""
+
+    ## Rate at which recombining electrons and protons produce Halpha photons.
+    ## Case B recombination assumed from Draine (2011)
+    #alpha = 2.54e-13 * (sim.g['temp'].in_units('K') / 1e4)**(-0.8163-0.0208*np.log(sim.g['temp'].in_units('K') / 1e4))
+    #alpha.units = units.cm**(3) * units.s**(-1)
+
+    ## H alpha intensity = coeff * EM
+    ## where coeff is h (c / Lambda_Halpha) / 4Pi) and EM is int rho_e * rho_p * alpha
+    ## alpha = 7.864e-14 T_1e4K from http://astro.berkeley.edu/~ay216/08/NOTES/Lecture08-08.pdf
+
+    coeff = (6.6260755e-27) * (299792458. / 656.281e-9) / (4.*np.pi) ## units are erg sr^-1
+    alpha = coeff * 7.864e-14 * (1e4 / sim['temp'].in_units('K'))
+
+    alpha.units = units.erg * units.cm**(3) * units.s**(-1) * units.sr**(-1) ## It's intensity in erg cm^3 s^-1 sr^-1
+
+    return (alpha * sim["em"]).in_units('erg cm^-3 s^-1 sr^-1') # Flux erg cm^-3 s^-1 sr^-1
+
+#gas
+@derived_array
+def nH(sim):
+    '''
+    the total hydrogen number density
+    '''
+    nh=sim['XH']*(sim['rho'].in_units('g cm^-3')/units.m_p).in_units('cm^-3')
+    nh.units=units.cm**-3
+    return nh
+
+
+#gas
+@derived_array
+def XH(sim):
+    '''
+    the hydrogen mass fraction
+    '''
+    if 'GFM_Metals' in sim.keys():
+        Xh=sim['GFM_Metals'].view(np.ndarray).T[0]
+        return SimArray(Xh)
+    else:
+        print('No GFM_Metals, use hydrogen mass fraction XH=0.76')
+        return SimArray(0.76*np.ones(len(sim)))
+
+    
+# gas
+@derived_array
+def mu(sim):
+    '''
+    the mean molecular weight
+    XH can be best estimated by GFM_Metals
+    '''
+    if 'ElectronAbundance' not in sim.keys():
+        print('need gas ElectronAbundance to cal: ElectronAbundance')
+   
+    return SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
+
+
+
 
 
 @simdict.SimDict.setter

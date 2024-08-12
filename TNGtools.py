@@ -1,7 +1,7 @@
 import numpy as np
 from AnastrisTNG.illustris_python.snapshot import *
 import h5py
-
+from tqdm import tqdm
 
 '''
 def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuzz=True,
@@ -122,46 +122,52 @@ def findtracer(basePath,snapNum,findID=None,istracerid=False,):
     
 
 
-    while numToRead:
-        f = h5py.File(snapPath(basePath, snapNum, fileNum), 'r')
+    # progress bar
+    with tqdm(total=numToRead) as pbar:
+        while numToRead:
+            f = h5py.File(il.snapshot.snapPath(basePath, snapNum, fileNum), 'r')
 
-        if gName not in f:
-            f.close()
-            fileNum += 1
-            fileOff  = 0
-            continue
+            if gName not in f:
+                f.close()
+                fileNum += 1
+                fileOff  = 0
+                continue
 
-        numTypeLocal = f['Header'].attrs['NumPart_ThisFile'][ptNum]
-        numToReadLocal = numToRead
+            numTypeLocal = f['Header'].attrs['NumPart_ThisFile'][ptNum]
+            numToReadLocal = numToRead
 
-        if fileOff + numToReadLocal > numTypeLocal:
-            numToReadLocal = numTypeLocal - fileOff
+            if fileOff + numToReadLocal > numTypeLocal:
+                numToReadLocal = numTypeLocal - fileOff
 
-        if istracerid:
-            findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
-        else:
-            findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
-
-        if findresult==False:
-            ParentID=np.array(f['PartType3']['ParentID'])
-            TracerID=np.array(f['PartType3']['TracerID'])
             if istracerid:
-                Findepatticle=np.isin(TracerID,findID)                     # time complexity O( len(array1)*len(array2) ) 
+                findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
             else:
-                Findepatticle=np.isin(ParentID,findID)
-            result['TracerID']=np.append(result['TracerID'],TracerID[Findepatticle])
-            result['ParentID']=np.append(result['ParentID'],ParentID[Findepatticle])
-            print('Number of tracers that have been matched: ',len(result['TracerID']))
-        wOffset   += numToReadLocal
-        numToRead -= numToReadLocal
-        fileNum   += 1
-        fileOff    = 0  
+                findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
 
-        f.close()
-        
-        # if matching TracerIDs, the number of tracers found must be the same as the len(findID).
-        if istracerid and len(result['TracerID'])==len(findID):   
-            break
+            if findresult==False:
+                ParentID=np.array(f['PartType3']['ParentID'])
+                TracerID=np.array(f['PartType3']['TracerID'])
+                if istracerid:
+                    Findepatticle=np.isin(TracerID,findID)                     # time complexity O( len(array1)*len(array2) ) 
+                else:
+                    Findepatticle=np.isin(ParentID,findID)
+                result['TracerID']=np.append(result['TracerID'],TracerID[Findepatticle])
+                result['ParentID']=np.append(result['ParentID'],ParentID[Findepatticle])
+                print('Number of tracers that have been matched: ',len(result['TracerID']))
+
+
+
+            wOffset   += numToReadLocal
+            numToRead -= numToReadLocal
+            fileNum   += 1
+            fileOff    = 0  
+
+            f.close()
+            pbar.update(numToReadLocal)
+            
+            # if matching TracerIDs, the number of tracers found must be the same as the len(findID).
+            if istracerid and len(result['TracerID'])==len(findID):   
+                break
     result['TracerID']=result['TracerID'].astype(int)
     result['ParentID']=result['ParentID'].astype(int)
     return result

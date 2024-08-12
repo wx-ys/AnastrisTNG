@@ -51,14 +51,15 @@ def SnapshotPaName(field,):
         'Masses': 'mass',
         'Velocities': 'vel',
         'GFM_StellarFormationTime': 'aform',
-        'GFM_Metallicity': 'metallicity',
-        'GFM_Metals': 'metals',
+        'GFM_Metallicity': 'metals',
+        'InternalEnergy': 'u',
+        
         'StarFormationRate': 'sfr',
     }
     if field in Matchfield.keys():
         return Matchfield[field]
     else:
-        return field.lower()
+        return field
 
 def SnapshotsUnits(field,):
     Matchfieldunits={
