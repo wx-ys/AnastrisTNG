@@ -1,3 +1,6 @@
 __pycache__/
 illustris_python/__pycache__/
 pytreegrav/__pycache__/
+dist/
+AnastrisTNG.egg-info/
+
