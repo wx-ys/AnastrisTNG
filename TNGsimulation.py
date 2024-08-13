@@ -5,9 +5,8 @@ from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,load
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGsubhalo import subhalos
-from AnastrisTNG.TNGhalo import halos
+from AnastrisTNG.TNGhalo import halos, calc_faceon_matrix
 from functools import reduce
-    
 class Snapshot(SimSnap):
 
 
@@ -72,7 +71,7 @@ class Snapshot(SimSnap):
     
 
 
-    def physical_units(self, persistent=True):
+    def physical_units(self, persistent=False):
 
         dims = self.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
@@ -481,7 +480,7 @@ class Snapshot(SimSnap):
         else:
             return 'locked'
         
-    def shift(self,pos=None,vel=None):
+    def shift(self,pos=None,vel=None,phi=None):
         '''
         shift to the specific position
         then set its pos, vel, phi, acc to 0.
@@ -493,10 +492,9 @@ class Snapshot(SimSnap):
         if vel is not None:
             self['vel']-=vel
             self.__vel+=vel
-        if 'phi' in self.keys():
-            thephi=self.target_potential(np.array([[0,0,0],pos]))[1]
-            self['phi']-=thephi
-            self.__phi+=thephi
+        if (phi is not None) and ('phi' in self.keys()):
+            self['phi']-=phi
+            self.__phi+=phi
 
         if 'acc' in self.keys():
             theacc=self.target_acceleration(np.array([[0,0,0],pos]))[1]
@@ -510,7 +508,7 @@ class Snapshot(SimSnap):
 
 
 
-    def vel_center(self,mode='com',pos=None,r_cal='1 kpc'):
+    def vel_center(self,mode='ssc',pos=None,r_cal='1 kpc'):
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
@@ -542,7 +540,7 @@ class Snapshot(SimSnap):
         return vcen
 
 
-    def center(self,mode='com'):
+    def center(self,mode='ssc'):
         '''
         The position center of this snapshot
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
@@ -582,6 +580,34 @@ class Snapshot(SimSnap):
 
         return 
     
+    def face_on(self,mode='ssc',alignwith='all',shift=True):
+        pos_center=self.center(mode=mode)
+        vel_center=self.vel_center(mode=mode)
+        if alignwith in ['all','total','All','Total']:
+            angmom = (self['mass'].reshape((len(self), 1)) *
+              np.cross(self['pos']-pos_center, self['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+        elif alignwith in ['DM','dm','darkmatter','Darkmatter']:
+            angmom = (self.dm['mass'].reshape((len(self.dm), 1)) *
+              np.cross(self.dm['pos']-pos_center, self.dm['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+        elif alignwith in ['star','s','Star']:
+            angmom = (self.s['mass'].reshape((len(self.s), 1)) *
+              np.cross(self.s['pos']-pos_center, self.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+        elif alignwith in ['gas','g','Gas']:
+            angmom = (self.g['mass'].reshape((len(self.g), 1)) *
+              np.cross(self.g['pos']-pos_center, self.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = (self.g['mass'].reshape((len(self.g), 1)) *
+              np.cross(self.g['pos']-pos_center, self.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            angmo2 = (self.s['mass'].reshape((len(self.s), 1)) *
+              np.cross(self.s['pos']-pos_center, self.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            angmom=angmom1+angmo2
+
+        trans =calc_faceon_matrix(angmom)
+        if shift:
+            self.ancestor.shift(pos=pos_center,vel=vel_center)
+            self._transform(trans)
+        else:
+            self._transform(trans)
 
     
     @property

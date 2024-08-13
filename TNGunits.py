@@ -18,7 +18,9 @@ UnitPressure=(UnitMass/UnitLength)*(units.km/units.s/units.kpc)**2
 UnitNo=units.no_unit
 
 
-
+global NotneedtransGCPa
+NotneedtransGCPa=['SubhaloSFR','SubhaloSFRinHalfRad','SubhaloSFRinMaxRad','SubhaloSFRinRad','SubhaloStellarPhotometrics',
+                  'GroupSFR']
 
 
 def HaloPaName(field,):

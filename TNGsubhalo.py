@@ -1,11 +1,12 @@
 import numpy as np
+from AnastrisTNG.TNGunits import NotneedtransGCPa
 from AnastrisTNG.TNGgroupcat import subhaloproperties
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
 from pynbody import units,filt
 from functools import reduce
-
-
+from pynbody.analysis.angmom import calc_faceon_matrix
+from pynbody.analysis.halo import virial_radius
 
 
 class Subhalo:
@@ -34,6 +35,8 @@ class Subhalo:
         dims =self.PT.ancestor.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
         for k in list(self.GC.keys()):
+            if k in NotneedtransGCPa:
+                continue
 
             v = self.GC[k]
             if isinstance(v, units.UnitBase):
@@ -58,7 +61,7 @@ class Subhalo:
                         self.GC[k].convert_units(new_unit)
 
 
-    def vel_center(self,mode='com',pos=None,r_cal='1 kpc'):
+    def vel_center(self,mode='ssc',pos=None,r_cal='1 kpc'):
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
@@ -92,7 +95,7 @@ class Subhalo:
         return vcen
 
 
-    def center(self,mode='com'):
+    def center(self,mode='ssc'):
         '''
         The position center of this snapshot
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
@@ -135,7 +138,47 @@ class Subhalo:
 
         return 
     
-                        
+    def face_on(self,mode='ssc',alignwith='all',shift=True):
+        pos_center=self.center(mode=mode)
+        vel_center=self.vel_center(mode=mode)
+        Rvir=self.R_vir(cen=pos_center)
+        innerpart=self.PT[filt.Sphere(radius=0.1*Rvir,cen=pos_center)]
+        with innerpart.immediate_mode:
+            if alignwith in ['all','total','All','Total']:
+                angmom = (innerpart['mass'].reshape((len(innerpart), 1)) *
+                np.cross(innerpart['pos']-pos_center, innerpart['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            elif alignwith in ['DM','dm','darkmatter','Darkmatter']:
+                angmom = (innerpart.dm['mass'].reshape((len(innerpart.dm), 1)) *
+                np.cross(innerpart.dm['pos']-pos_center, innerpart.dm['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            elif alignwith in ['star','s','Star']:
+                angmom = (innerpart.s['mass'].reshape((len(innerpart.s), 1)) *
+                np.cross(innerpart.s['pos']-pos_center, innerpart.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            elif alignwith in ['gas','g','Gas']:
+                angmom = (innerpart.g['mass'].reshape((len(innerpart.g), 1)) *
+                np.cross(innerpart.g['pos']-pos_center, innerpart.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+            elif alignwith in ['baryon','baryonic']:
+                angmom1 = (innerpart.g['mass'].reshape((len(innerpart.g), 1)) *
+                np.cross(innerpart.g['pos']-pos_center, innerpart.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+                angmo2 = (innerpart.s['mass'].reshape((len(innerpart.s), 1)) *
+                np.cross(innerpart.s['pos']-pos_center, innerpart.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
+                angmom=angmom1+angmo2
+
+        trans =calc_faceon_matrix(angmom)
+        if shift:
+            phimax=None
+            if 'phi' in self.PT.keys():
+                R200=self.R_vir(cen=pos_center,overden=200)
+                phimax=self.PT[filt.Annulus(r1=R200,r2=Rvir,cen=pos_center,)]['phi'].mean()
+            self.PT.ancestor.shift(pos=pos_center,vel=vel_center,phi=phimax)
+            self._transform(trans)
+        else:
+            self._transform(trans)
+
+
+    def R_vir(self, cen=None,overden=178):
+        R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
+        return R
+
     def wrap(self,boxsize=None, convention='center'):
         self.PT.ancestor.wrap(boxsize,convention)
 
@@ -149,17 +192,7 @@ class Subhalo:
         self.PT.ancestor.rotate_z(angle)
 
     def transform(self, matrix):
-        self.PT.ancestor.transform(matrix)
-
-
-
-
-
-
-            
-        
-
-    
+        self.PT.ancestor._transform(matrix)
 
 
     def __check_paticles(self):
@@ -193,8 +226,9 @@ class subhalos:
     def GC(self,key):
         k=[]
         for i in self.__snaps.GC_loaded_Subhalo:
-            k.append(self[i].GC[key])
-        return k
+            k.append(self[str(i)].GC[key])
+        ku=SimArray(np.array(k),k[0].units)
+        return ku
 
 
 

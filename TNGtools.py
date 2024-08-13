@@ -2,8 +2,10 @@ import numpy as np
 from AnastrisTNG.illustris_python.snapshot import *
 import h5py
 from tqdm import tqdm
-
+import multiprocessing as mp
 '''
+# form https://www.tng-project.org/data/forum/topic/274/match-snapshot-particles-with-their-halosubhalo/
+# Careful memory usage
 def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuzz=True,
                                      ):
    #  SubhaloLenType, SnapOffsetsSubhalo
@@ -46,8 +48,81 @@ def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuz
 
     return val
 '''
+def process_file(file_info):
+        basePath, snapNum, fileNum, findIDset, istracerid = file_info
+        result_local = {'ParentID': [], 'TracerID': []}
+        
+        gName = "PartType3"
+        fields = ['ParentID', 'TracerID']
+        
+        with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
+            if gName not in f:
+                return result_local
+            
+            if istracerid:
+                findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+            else:
+                findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
+            
+            if findresult==False:
+                ParentID = np.array(f[gName]['ParentID'])
+                TracerID = np.array(f[gName]['TracerID'])
+                
+                if istracerid:
+                    Findepatticle = np.isin(TracerID, findIDset)
+                else:
+                    Findepatticle = np.isin(ParentID, findIDset)
+                
+                result_local['TracerID'] = TracerID[Findepatticle]
+                result_local['ParentID'] = ParentID[Findepatticle]
+        
+        return result_local
 
 
+def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
+    result = {'ParentID': np.array([]), 'TracerID': np.array([])}
+    findIDset = set(findID)
+    
+    # Load header to determine number of particles
+    with h5py.File(snapPath(basePath, snapNum), 'r') as f:
+        header = dict(f['Header'].attrs.items())
+        nPart = getNumPart(header)
+        numToRead = nPart[3]  #trecer num
+        
+        if not numToRead:
+            return result
+        
+        # file num
+        file_numbers = []
+        i = 1
+        while True:
+            try:
+                with h5py.File(snapPath(basePath, snapNum, i), 'r') as f:
+                    if "PartType3" in f:
+                        file_numbers.append(i)
+                        i += 1
+                    else:
+                        break
+            except FileNotFoundError:
+                break
+    # mutiprocesses
+    with mp.Pool(processes=NP) as pool:
+        # date
+        file_infos = [(basePath, snapNum, fileNum, findIDset, istracerid) for fileNum in file_numbers]
+        
+        # progressing bar
+        with tqdm(total=len(file_infos)) as pbar:
+            # Use imap to process files and update the progress bar
+            for result_local in pool.imap(process_file, file_infos):
+                result['TracerID'] = np.append(result['TracerID'], result_local['TracerID'])
+                result['ParentID'] = np.append(result['ParentID'], result_local['ParentID'])
+                pbar.update(1)
+    
+    # Convert to integer type
+    result['TracerID'] = result['TracerID'].astype(int)
+    result['ParentID'] = result['ParentID'].astype(int)
+    
+    return result
 
 
 
@@ -82,6 +157,7 @@ def findtracer(basePath,snapNum,findID=None,istracerid=False,):
             Trecerbefore=findtracer(basePath,snapNumbefore,findID=Tracernow['TracerID'],istracerid=True,) # link the TracerID to progenitor ParticleIDs(ParentID)
             #Trecerbefore['ParentID'] is the progenitor ParticleIDs # could be gas, or star..        
     """
+
     result = {}
     result['ParentID']=np.array([])
     result['TracerID']=np.array([])
@@ -125,7 +201,7 @@ def findtracer(basePath,snapNum,findID=None,istracerid=False,):
     # progress bar
     with tqdm(total=numToRead) as pbar:
         while numToRead:
-            f = h5py.File(il.snapshot.snapPath(basePath, snapNum, fileNum), 'r')
+            f = h5py.File(snapPath(basePath, snapNum, fileNum), 'r')
 
             if gName not in f:
                 f.close()
@@ -138,6 +214,8 @@ def findtracer(basePath,snapNum,findID=None,istracerid=False,):
 
             if fileOff + numToReadLocal > numTypeLocal:
                 numToReadLocal = numTypeLocal - fileOff
+
+            
 
             if istracerid:
                 findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )

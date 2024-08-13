@@ -531,8 +531,8 @@ def mu(sim):
     '''
     if 'ElectronAbundance' not in sim.keys():
         print('need gas ElectronAbundance to cal: ElectronAbundance')
-   
-    return SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
+    muu=SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
+    return muu.in_units('m_p')
 
 
 
