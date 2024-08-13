@@ -3,12 +3,9 @@ import setuptools, os
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
-thelibFolder = os.path.dirname(os.path.realpath(__file__))
-requirementPath = thelibFolder + "/requirements.txt"
-install_requires = []
-if os.path.isfile(requirementPath):
-    with open(requirementPath) as f:
-        install_requires = f.read().splitlines()
+
+with open('requirements.txt') as f:
+    install_requires = f.read().splitlines()
 
 setuptools.setup(
     name="AnastrisTNG",

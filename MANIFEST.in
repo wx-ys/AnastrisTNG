@@ -1,0 +1,16 @@
+recursive-include illustris_python *.py
+recursive-include pytreegrav *.py
+
+include illustris_python/LICENSE.md
+include pytreegrav/LICENSE.txt
+
+include LICENSE
+include requirements.txt
+include README.md
+include TNGgroupcat.py
+include TNGsimulation.py
+include TNGsubhalo.py
+include TNGunits.py
+include TNGhalo.py
+include TNGsnapshot.py
+include TNGtools.py
