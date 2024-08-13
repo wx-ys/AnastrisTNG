@@ -15,15 +15,14 @@ setuptools.setup(
     description="IllustrisTNG simulation data analysis",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    project_urls={
-        "Bug Tracker": "https://github.com/wx-ys/AnastrisTNG",
-    },
+    url="https://github.com/wx-ys/AnastrisTNG",
     classifiers=[
         "Programming Language :: Python :: 3",
         "License :: OSI Approved :: MIT License",
         "Operating System :: OS Independent",
     ],
+    license='MIT',
     packages=setuptools.find_packages(),
-    python_requires=">=3.6",
+    python_requires=">=3",
     install_requires=install_requires,
 )
