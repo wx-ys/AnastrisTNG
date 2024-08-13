@@ -1,5 +1,5 @@
 ## Introduction
-Anastris is a package for processing and analyzing data from the cosmological simulation IllustrisTNG.
+AnastrisTNG is a package for processing and analyzing data from the cosmological simulation IllustrisTNG.
 
 ## Installation
 

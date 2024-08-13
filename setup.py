@@ -1,0 +1,32 @@
+import setuptools, os
+
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
+thelibFolder = os.path.dirname(os.path.realpath(__file__))
+requirementPath = thelibFolder + "/requirements.txt"
+install_requires = []
+if os.path.isfile(requirementPath):
+    with open(requirementPath) as f:
+        install_requires = f.read().splitlines()
+
+setuptools.setup(
+    name="AnastrisTNG",
+    version="1.0.0",
+    author="Shuai Lu",
+    author_email="lushuai@stu.xmu.edu.cn",
+    description="IllustrisTNG simulation data analysis",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    project_urls={
+        "Bug Tracker": "https://github.com/wx-ys/AnastrisTNG",
+    },
+    classifiers=[
+        "Programming Language :: Python :: 3",
+        "License :: OSI Approved :: MIT License",
+        "Operating System :: OS Independent",
+    ],
+    packages=setuptools.find_packages(),
+    python_requires=">=3.6",
+    install_requires=install_requires,
+)
