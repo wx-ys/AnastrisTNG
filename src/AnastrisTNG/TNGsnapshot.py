@@ -70,7 +70,10 @@ class profile:
             ac.convert_units('kpc Gyr**-2')
             POS.convert_units('kpc')
             velall=np.diag(np.dot(ac-ac[0],-POS.T))
-            velall.units=units.kpc**2/units.Gyr**2
+            if 'units' in dir(velall):
+                velall.units=units.kpc**2/units.Gyr**2
+            else:
+                velall=SimArray(velall,units.kpc**2/units.Gyr**2)
             velTrue=np.zeros(len(R))
             for i in range(len(R)):
                 velTrue[i]=np.mean(velall[i+1:8*(i+1)+1])

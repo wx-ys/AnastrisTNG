@@ -401,12 +401,12 @@ class Snapshot(SimSnap):
             acc.__stable__=True
             return
         if '_derived_array_registry' in dir(self):
-            self._derived_quantity_registry[phi.__name__]=phi
-            self._derived_quantity_registry[phi.__name__] = phi
+            self._derived_array_registry[phi.__name__]=phi
+            self._derived_array_registry[phi.__name__] = phi
             phi.__stable__=True
 
-            self._derived_quantity_registry[acc.__name__]=acc
-            self._derived_quantity_registry[acc.__name__] = acc
+            self._derived_array_registry[acc.__name__]=acc
+            self._derived_array_registry[acc.__name__] = acc
             acc.__stable__=True
 
     def __repr__(self):
@@ -488,17 +488,21 @@ class Snapshot(SimSnap):
         
         if pos is not None:
             self['pos']-=pos
+            self.__pos.convert_units(self['pos'].units)
             self.__pos+=pos
         if vel is not None:
             self['vel']-=vel
+            self.__vel.convert_units(self['vel'].units)
             self.__vel+=vel
         if (phi is not None) and ('phi' in self.keys()):
             self['phi']-=phi
+            self.__phi.convert_units(self['phi'].units)
             self.__phi+=phi
 
         if 'acc' in self.keys():
             theacc=self.target_acceleration(np.array([[0,0,0],pos]))[1]
             self['acc']-=theacc
+            self.__acc.convert_units(self['acc'].units)
             self.__acc+=theacc
 
 

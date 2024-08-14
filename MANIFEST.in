@@ -1,8 +1,8 @@
-recursive-include AnastrisTNG/illustris_python *.py
-recursive-include AnastrisTNG/pytreegrav *.py
-include AnastrisTNG/illustris_python/LICENSE.md
-include AnastrisTNG/pytreegrav/LICENSE.txt
-
 include LICENSE
 include requirements.txt
 include README.md
+recursive-include src/AnastrisTNG *.py
+recursive-include src/AnastrisTNG/illustris_python *.py
+recursive-include src/AnastrisTNG/pytreegrav *.py
+include src/AnastrisTNG/illustris_python/LICENSE
+include src/AnastrisTNG/pytreegrav/LICENSE

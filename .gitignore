@@ -1,6 +1,9 @@
 __pycache__/
-illustris_python/__pycache__/
-pytreegrav/__pycache__/
 dist/
-AnastrisTNG.egg-info/
+src/AnastrisTNG.egg-info/
+src/AnastrisTNG/__pycache__
+src/AnastrisTNG/illustris_python/__pycache__
+src/AnastrisTNG/pytreegrav/__pycache__
+
+
 
