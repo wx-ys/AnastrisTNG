@@ -1,7 +1,7 @@
-h5py>=3.8.0
-numba>=0.58.1
-numpy>=1.24.2
-pynbody>=1.4.2
-scipy>=1.14.0
-six>=1.14.0
-tqdm>=4.66.5
+h5py
+numba
+numpy
+pynbody
+scipy
+six
+tqdm
