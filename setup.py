@@ -9,7 +9,7 @@ with open('requirements.txt') as f:
 
 setuptools.setup(
     name="AnastrisTNG",
-    version="1.0.0",
+    version="1.1.0",
     author="Shuai Lu",
     author_email="lushuai@stu.xmu.edu.cn",
     description="IllustrisTNG simulation data analysis",

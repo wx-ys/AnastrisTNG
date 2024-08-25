@@ -3,12 +3,13 @@ import numpy as np
 
 
 
-
+# Define a list of IllustrisTNG simulation runs available for analysis
 global illustrisTNGruns
 illustrisTNGruns=['TNG50-1','TNG50-2','TNG50-3','TNG50-4',
                   'TNG100-1','TNG100-2','TNG100-3',
                   'TNG300-1','TNG300-2','TNG300-3',]
 
+# Define common units used in TNG simulations
 UnitLength=units.kpc/units.h
 UnitMass=1e10*units.Msol/units.h
 UnitVel=units.km/units.s
@@ -17,14 +18,35 @@ UnitComvingLength=units.a*UnitLength
 UnitPressure=(UnitMass/UnitLength)*(units.km/units.s/units.kpc)**2
 UnitNo=units.no_unit
 
-
+# Define parameters that will not be converted in physical_units()
 global NotneedtransGCPa
 NotneedtransGCPa=['SubhaloSFR','SubhaloSFRinHalfRad','SubhaloSFRinMaxRad','SubhaloSFRinRad','SubhaloStellarPhotometrics',
                   'GroupSFR']
 
 
-def HaloPaName(field,):
-    
+def HaloPaName(field :str ,) -> str:
+    """
+    This function modifies the name of a halo parameter to a custom-defined name.
+
+    Parameters:
+    -----------
+    field : str
+        The standard name of the halo parameter as it is typically used in the data.
+
+    Returns:
+    --------
+    str
+        The custom name corresponding to the input parameter. If the input parameter
+        does not match any predefined names, the function returns the input parameter 
+        name unchanged.
+
+    Notes:
+    ------
+    The function uses a dictionary `Matchfield` to map standard halo parameter names to 
+    their custom names. Currently, `Matchfield` is empty. If the input `field` is found 
+    in `Matchfield`, the corresponding custom name is returned. Otherwise, the function 
+    returns the original `field` name.
+    """
     Matchfield={
 
     }
@@ -33,7 +55,29 @@ def HaloPaName(field,):
     else:
         return field
 
-def SubhaloPaName(field,):
+def SubhaloPaName(field :str,) -> str:
+    """
+    This function modifies the name of a subhalo parameter to a custom-defined name.
+
+    Parameters:
+    -----------
+    field : str
+        The standard name of the halo parameter as it is typically used in the data.
+
+    Returns:
+    --------
+    str
+        The custom name corresponding to the input parameter. If the input parameter
+        does not match any predefined names, the function returns the input parameter 
+        name unchanged.
+
+    Notes:
+    ------
+    The function uses a dictionary `Matchfield` to map standard subhalo parameter names to 
+    their custom names. Currently, `Matchfield` is empty. If the input `field` is found 
+    in `Matchfield`, the corresponding custom name is returned. Otherwise, the function 
+    returns the original `field` name.
+    """
     Matchfield={
 
     }
@@ -44,7 +88,28 @@ def SubhaloPaName(field,):
         
 
 
-def SnapshotPaName(field,):
+def SnapshotPaName(field : str,) -> str:
+    """
+    This function modifies the name of a particle parameter to a custom-defined name.
+
+    Parameters:
+    -----------
+    field : str
+        The standard name of the parameter as it is typically used in the data.
+
+    Returns:
+    --------
+    str
+        The custom name corresponding to the input parameter. If the input parameter
+        does not match any predefined names, the function returns the input parameter 
+        name unchanged.
+
+    Notes:
+    ------
+    The function uses a dictionary `Matchfield` to map standard parameter names to 
+    their custom names. If the input `field` is found in `Matchfield`, the corresponding 
+    custom name is returned. Otherwise, the function returns the original `field` name.
+    """
     Matchfield={
         'Coordinates': 'pos',
         'Density': 'rho',
@@ -63,7 +128,36 @@ def SnapshotPaName(field,):
     else:
         return field
 
-def SnapshotsUnits(field,):
+def SnapshotsUnits(field : str,) -> units.Unit:
+    """
+    This function provides the unit corresponding to a given particle parameter.
+
+    Parameters:
+    -----------
+    field : str
+        The name of the particle parameter for which the unit is requested.
+
+    Returns:
+    --------
+    unit
+        The unit associated with the input parameter. If the parameter is not 
+        defined in `Matchfieldunits`, the function will raise a KeyError.
+
+    Notes:
+    ------
+    The function uses a dictionary `Matchfieldunits` to map parameter names to their 
+    respective units. The units are specified based on the TNG project's data 
+    specifications as detailed in their documentation:
+    https://www.tng-project.org/data/docs/specifications/#sec1b
+    
+    Examples:
+    ---------
+    >>> SnapshotsUnits('Density')
+    (UnitMass)/(UnitComvingLength)**3
+    
+    >>> SnapshotsUnits('Velocity')
+    KeyError: 'Velocity'
+    """
     Matchfieldunits={
         'CenterOfMass': UnitComvingLength,
         'Coordinates': UnitComvingLength,
@@ -114,9 +208,33 @@ def SnapshotsUnits(field,):
         'BH_Progs': UnitNo,
         'BH_U': (UnitVel)**2,
     }
-    return Matchfieldunits[field]
+    if field in Matchfieldunits:
+        return Matchfieldunits[field]
+    else:
+        raise KeyError(f"Parameter '{field}' not found in Matchfieldunits.")
 
-def GroupcatUnits(field,):
+def GroupcatUnits(field : str,) -> units.Unit:
+    """
+    This function provides the unit corresponding to a given halo or subhalo parameter.
+
+    Parameters:
+    -----------
+    field : str
+        The name of the halo or subhalo parameter for which the unit is requested.
+
+    Returns:
+    --------
+    unit
+        The unit associated with the input parameter. If the parameter is not 
+        defined in `Matchfieldunits`, the function will raise a KeyError.
+
+    Notes:
+    ------
+    The function uses a dictionary `Matchfieldunits` to map parameter names to 
+    their respective units. The units are specified based on the TNG project's data 
+    specifications as detailed in their documentation:
+    https://www.tng-project.org/data/docs/specifications/#sec2
+    """
     Matchfieldunits={
         ### halo properties
         'GroupBHMass': UnitMass,
@@ -198,6 +316,9 @@ def GroupcatUnits(field,):
         'SubhaloVmaxRad': UnitComvingLength,
         'SubhaloWindMass': UnitMass
     }
-    return Matchfieldunits[field]
+    if field in Matchfieldunits:
+        return Matchfieldunits[field]
+    else:
+        raise KeyError(f"Parameter '{field}' not found in Matchfieldunits.")
 
 

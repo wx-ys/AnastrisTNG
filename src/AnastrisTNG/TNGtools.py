@@ -49,37 +49,124 @@ def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuz
     return val
 '''
 def process_file(file_info):
-        basePath, snapNum, fileNum, findIDset, istracerid = file_info
-        result_local = {'ParentID': [], 'TracerID': []}
+    """
+    Process a single file to find tracers of specified IDs (ParentIDs or TracerIDs).
+    This function is used by the `findtracer_MP` function to distribute tasks among multiple processes.
+
+    Parameters:
+    ----------
+    file_info : tuple
+        A tuple containing the following elements:
+            - basePath : str
+                The base directory path where simulation data is stored.
+            - snapNum : int
+                Snapshot number to search within.
+            - fileNum : int
+                The file number within the snapshot to process.
+            - findIDset : set
+                Set of specified IDs (ParentIDs or TracerIDs) to find.
+            - istracerid : bool
+                If True, match TracerIDs; if False, match ParentIDs.
+
+    Returns:
+    -------
+    dict
+        A dictionary with keys:
+            - 'ParentID': List of matched ParentIDs.
+            - 'TracerID': List of matched TracerIDs.
+        Note:
+            - When `istracerid` is True, the dictionary contains tracers that match the IDs in `findIDset`.
+            - When `istracerid` is False, the dictionary contains parents that match the IDs in `findIDset`.
+
+    Notes:
+    -----
+    - This function is designed to be used with multiprocessing to improve performance when searching through large datasets.
+    - It reads a specific file within a snapshot and checks for the presence of IDs in the dataset.
+
+    Example:
+    --------
+    To use with `findtracer_MP`:
+        file_info = (basePath, snapNum, fileNum, findIDset, istracerid)
+        result_local = process_file(file_info)
+    """
+    basePath, snapNum, fileNum, findIDset, istracerid = file_info
+    result_local = {'ParentID': [], 'TracerID': []}
+    
+    gName = "PartType3"
+    fields = ['ParentID', 'TracerID']
+    
+    with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
+        if gName not in f:
+            return result_local
         
-        gName = "PartType3"
-        fields = ['ParentID', 'TracerID']
+        if istracerid:
+            findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+        else:
+            findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
         
-        with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
-            if gName not in f:
-                return result_local
+        if findresult==False:
+            ParentID = np.array(f[gName]['ParentID'])
+            TracerID = np.array(f[gName]['TracerID'])
             
             if istracerid:
-                findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+                Findepatticle = np.isin(TracerID, findIDset)
             else:
-                findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
+                Findepatticle = np.isin(ParentID, findIDset)
             
-            if findresult==False:
-                ParentID = np.array(f[gName]['ParentID'])
-                TracerID = np.array(f[gName]['TracerID'])
-                
-                if istracerid:
-                    Findepatticle = np.isin(TracerID, findIDset)
-                else:
-                    Findepatticle = np.isin(ParentID, findIDset)
-                
-                result_local['TracerID'] = TracerID[Findepatticle]
-                result_local['ParentID'] = ParentID[Findepatticle]
-        
-        return result_local
+            result_local['TracerID'] = TracerID[Findepatticle]
+            result_local['ParentID'] = ParentID[Findepatticle]
+    
+    return result_local
 
 
 def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
+    """
+    Find the tracers of specified IDs (ParentIDs or TracerIDs) using multiprocessing to speed up the search.
+
+    Note:
+        This function works for all snapshots in TNG300 and TNG50, but only the 20 full snapshots for TNG100.
+        Using multiprocessing with the parameter NP can improve performance, but be mindful of available memory.
+
+    Parameters:
+    ----------
+    basePath : str
+        The base directory path where simulation data is stored.
+    snapNum : int
+        Snapshot number to search within.
+    findID : list 
+        1D array of the specified IDs (ParentIDs or TracerIDs) to find. Default is None.
+    istracerid : bool, optional
+        If True, match TracerIDs; if False, match ParentIDs. Default is False.
+    NP : int, optional
+        Number of multiprocessing processes to use. Default is 6. More processes can speed up the search but require more memory.
+
+    Returns:
+    -------
+    dict
+        A dictionary with keys:
+            - 'ParentID': Array of matched ParentIDs.
+            - 'TracerID': Array of matched TracerIDs.
+        Note:
+            - When matching ParentIDs, the number of tracers found may differ from the length of `findID` since a parent can have no or multiple tracers.
+            - When matching TracerIDs, the number of tracers found must match the length of `findID`.
+
+    Examples:
+    --------
+    Example 1:
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi can be gas cell, star, wind phase cell, or BH IDs
+        Tracer = findtracer_MP(basePath, snapNum, findID=findID, istracerid=False)
+
+    Example 2:
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi should be tracer IDs
+        Tracer = findtracer_MP(basePath, snapNum, findID=findID, istracerid=True)
+
+    Example 3: Find the progenitor gas ParticleIDs of star ParticleIDs
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi are the current star ParticleIDs (ParentID)
+        Tracernow = findtracer_MP(basePath, snapNumNow, findID=findID, istracerid=False)  # Link current ParticleIDs (ParentID) to TracerID
+        Trecerbefore = findtracer_MP(basePath, snapNumbefore, findID=Tracernow['TracerID'], istracerid=True)  # Link TracerID to progenitor ParticleIDs (ParentID)
+        # Trecerbefore['ParentID'] contains the progenitor ParticleIDs (could be gas or star)
+    """
+    
     result = {'ParentID': np.array([]), 'TracerID': np.array([])}
     findIDset = set(findID)
     
@@ -126,36 +213,50 @@ def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
 
 
 
-def findtracer(basePath,snapNum,findID=None,istracerid=False,):
-    
+def findtracer(basePath : str,snapNum : int, findID : list =None,
+               istracerid : bool = False,) -> dict:
     """ 
-        Find the tracers of the specified IDs (ParentIDs or TracerIDs)
-        Note: it will work for all 100 snapshots for TNG300 and TNG50, but only the (20) full snapshots for TNG100.
+    Find the tracers of specified IDs (ParentIDs or TracerIDs) in the simulation data.
 
-        Input:
-            findID: 1d array of the specified IDs
-            istracerid: Ture for matching TracerIDs;
-                        False for matching ParentIDs;
+    Note:
+        This function works for all 100 snapshots for TNG300 and TNG50, but only the 20 full snapshots for TNG100.
 
-        Output: 
-            result: dict, keys: 'ParentID','TracerID'.
-            Note: As a parent has no, or multiple, tracers:
-                if matching ParentIDs, the number of tracers found is likely to be different from the len(findID).
-                if matching TracerIDs, the number of tracers found must be the same as the len(findID).
+    Parameters:
+    ----------
+    basePath : str
+        The base directory path where simulation data is stored.
+    snapNum : int
+        Snapshot number to search within.
+    findID : list or array
+        1D array of the specified IDs (ParentIDs or TracerIDs) to find. Default is None.
+    istracerid : bool, optional
+        If True, match TracerIDs; if False, match ParentIDs. Default is False.
 
-        Example1:
-            findID=np.array([ID1,ID2,ID3...,IDi]) # IDi could be a gas cell, star, wind phase cell, or BH IDs
-            Tracer=findtracer(basePath,snapNum,findID=findID,istracerid=False,)
+    Returns:
+    -------
+    dict
+        A dictionary with keys:
+            - 'ParentID': Array of matched ParentIDs.
+            - 'TracerID': Array of matched TracerIDs.
+        Note: 
+            - When matching ParentIDs, the number of tracers found may differ from the length of `findID` since a parent can have no or multiple tracers.
+            - When matching TracerIDs, the number of tracers found must match the length of `findID`.
 
-        Example2:
-            findID=np.array([ID1,ID2,ID3...,IDi]) # IDi should be tracer IDs 
-            Tracer=findtracer(basePath,snapNum,findID=findID,istracerid=True,)
+    Examples:
+    --------
+    Example 1:
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi can be gas cell, star, wind phase cell, or BH IDs
+        Tracer = findtracer(basePath, snapNum, findID=findID, istracerid=False)
 
-        Example3: find the progenitor gas ParticleIDs of star ParticleIDs
-            findID=np.array([ID1,ID2,ID3...,IDi]) # IDi is the current star ParticleIDs(ParentID)
-            Tracernow=findtracer(basePath,snapNumNow,findID=findID,istracerid=False,) # link the current ParticleIDs(ParentID) to TracerID
-            Trecerbefore=findtracer(basePath,snapNumbefore,findID=Tracernow['TracerID'],istracerid=True,) # link the TracerID to progenitor ParticleIDs(ParentID)
-            #Trecerbefore['ParentID'] is the progenitor ParticleIDs # could be gas, or star..        
+    Example 2:
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi should be tracer IDs
+        Tracer = findtracer(basePath, snapNum, findID=findID, istracerid=True)
+
+    Example 3: Find the progenitor gas ParticleIDs of star ParticleIDs
+        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi are the current star ParticleIDs (ParentID)
+        Tracernow = findtracer(basePath, snapNumNow, findID=findID, istracerid=False)  # Link current ParticleIDs (ParentID) to TracerID
+        Trecerbefore = findtracer(basePath, snapNumbefore, findID=Tracernow['TracerID'], istracerid=True)  # Link TracerID to progenitor ParticleIDs (ParentID)
+        # Trecerbefore['ParentID'] contains the progenitor ParticleIDs (could be gas or star)
     """
 
     result = {}
