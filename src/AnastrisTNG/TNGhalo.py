@@ -8,13 +8,47 @@ from functools import reduce
 from pynbody.analysis.angmom import calc_faceon_matrix
 from pynbody.analysis.halo import virial_radius
 class Halo:
+    """
+    Represents a single halo in the simulation.
+
+    This class contains information about the particles of the halo and its corresponding group catalog data.
+    It also includes functions to compute properties specific to this halo.
+
+    Attributes:
+    ----------
+    PT : SimArray
+        The particles of the halo. Detailed information about this can be found at
+        https://www.tng-project.org/data/docs/specifications/#sec1.
+    GC : SimDict
+        The group catalog for this halo. Detailed information about this can be found at
+        https://www.tng-project.org/data/docs/specifications/#sec2.
+
+    Parameters:
+    ----------
+    simarray : SimArray
+        An object containing the particle data for the halo.
+
+    """
+    
+    
     def __init__(self,simarray):
+        """
+        Initializes the Halo object.
+
+        Parameters:
+        -----------
+        simarray : object
+            An object that contains halo particles.
+        """
         self.PT=simarray
         self.GC=SimDict()
         self.GC.update(simarray.properties)
         self.GC['HaloID']=int(simarray.filename.split('_')[-1])
 
     def _load_GC(self):
+        """
+        Loads the group catalog data for this halo and updates its properties.
+        """
         proper=haloproperties(self.GC['filedir'],
                                  self.GC['Snapshot'],
                                  self.GC['HaloID'])
@@ -24,7 +58,20 @@ class Halo:
                 self.GC[i].sim=self.PT.ancestor
 
     def GC_physical_units(self, distance='kpc', velocity='km s^-1', mass='Msol'):
+        """
+        Converts the units of the group catalog (GC) properties to physical units.
+        
+        This method updates the `GC` attribute of the `Subhalo` instance to use physical units
+        for its properties, based on predefined unit conversions and the current unit context.
 
+        Conversion is applied only to properties that are not listed in `NotneedtransGCPa`.
+
+        Notes:
+        -----
+        - `self.PT.ancestor.properties['baseunits']` provides the base units for dimensional analysis.
+        - The dimensional projection and conversion are handled using the `units` library.
+        - Properties listed in `NotneedtransGCPa` are skipped during the conversion process.
+        """
         dims = self.PT.ancestor.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
         for k in list(self.GC.keys()):
@@ -129,6 +176,36 @@ class Halo:
         return 
     
     def face_on(self,mode='ssc',alignwith='all',shift=True):
+        """
+        Transforms the halo's coordinate system to a 'face-on' view.
+
+        This method aligns the halo such that the selected component's angular momentum
+        is aligned with the z-axis. It optionally shifts the halo to the center of the coordinate system.
+
+        Parameters:
+        -----------
+        mode : str, optional
+            Determines how to center the halo. Default is 'ssc'. Other options might include 'virial' or 'custom'.
+        alignwith : str, optional
+            Specifies which component to use for alignment. Options include:
+            - 'all' or 'total': Uses the combined angular momentum of all components.
+            - 'DM', 'dm', 'darkmatter', 'Darkmatter': Uses the angular momentum of dark matter.
+            - 'star', 's', 'Star': Uses the angular momentum of stars.
+            - 'gas', 'g', 'Gas': Uses the angular momentum of gas.
+            - 'baryon', 'baryonic': Uses the combined angular momentum of stars and gas.
+        shift : bool, optional
+            If True, shifts the halo to its center of mass and adjusts the coordinate system. Default is True.
+
+        Notes:
+        ------
+        - `self.center(mode=mode)` computes the center of the halo based on the specified mode.
+        - `self.vel_center(mode=mode)` computes the velocity center of the halo.
+        - `self.R_vir(cen=pos_center)` provides the virial radius based on the computed center.
+        - `calc_faceon_matrix(angmom)` calculates the transformation matrix to align the halo to face-on view.
+        - The method assumes the presence of `immediate_mode` for `innerpart` to enable efficient data access.
+        """
+        
+        
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
         Rvir=self.R_vir(cen=pos_center)
@@ -164,6 +241,21 @@ class Halo:
         else:
             self._transform(trans)
     def R_vir(self,cen=None,overden=178):
+        """
+        Calculates the virial radius of the halo.
+
+        Parameters:
+        -----------
+        cen : array-like 
+            The center position to use.
+        overden : float
+            The overdensity criterion.
+
+        Returns:
+        --------
+        R : simarray
+            The virial radius.
+        """
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
     
@@ -196,21 +288,56 @@ class Halo:
 
 class halos:
     def __init__(self, snaps):
+        """
+        Initializes the halos object.
+
+        Parameters:
+        -----------
+        snaps : object
+            An object that contains snapshot properties.
+        """
         self.__snaps = snaps  
         self._data = {}
 
     def keys(self):
+        """
+        Returns the keys of the halos dictionary.
+        
+        Returns:
+        --------
+        keys : list
+            List of keys in the _data dictionary.
+        """
         return self._data.keys()
 
     def clear(self):
+        """
+        Clears all halo data from the dictionary.
+        """
         self._data.clear()
 
     def update(self):
+        """
+        Updates the PT attribute of all Halo objects in the _data dictionary.
+        """
         for i in self._data.keys():
             self._data[i].PT=self._generate_value(i) 
 
 
     def GC(self,key):
+        """
+        Returns a combined SimArray of a specific parameter from all loaded halos.
+
+        Parameters:
+        -----------
+        key : str
+            The key in the group catalog.
+
+        Returns:
+        --------
+        ku : SimArray
+            A SimArray combining the values of the specified key from all halos.
+        """
         k=[]
         for i in self.__snaps.GC_loaded_Halo:
             k.append(self[str(i)].GC[key])
@@ -218,11 +345,27 @@ class halos:
         return ku
 
     def _load_GC(self):
+        """
+        Loads the group catalog data for all Halo objects in the _data dictionary.
+        """
         for i in self._data.keys():
             self._data[i]._load_GC()
 
     
     def _generate_value(self, key):
+        """
+        Generates a Halo object from a given key.
+
+        Parameters:
+        -----------
+        key : str
+            The Halo ID.
+
+        Returns:
+        --------
+        property_value : object
+            The halo properties or None if the Halo ID is invalid.
+        """
         if (int(key) < self.__snaps.properties['Halos_total']) and (int(key)> -1):
             if 'HaloID' in self.__snaps.keys():
                 property_value = self.__snaps[np.where(self.__snaps['HaloID']==int(key))]
@@ -240,6 +383,19 @@ class halos:
             return None
 
     def __getitem__(self, key):
+        """
+        Retrieves a Halo object from the _data dictionary.
+
+        Parameters:
+        -----------
+        key : int, str, list, or np.ndarray
+            The key or list of keys to retrieve.
+
+        Returns:
+        --------
+        Halo object or None
+            The requested Halo object or None if not found.
+        """
         if isinstance(key,list) or isinstance(key,np.ndarray):
             key=np.array(key).flatten()
             for j in key:
@@ -260,10 +416,31 @@ class halos:
         return self._data[key]
 
     def __setitem__(self, key, value):
+        """
+        Sets a Halo object in the _data dictionary.
+
+        Parameters:
+        -----------
+        key : str
+            The key for the Halo object.
+        value : Halo
+            The Halo object to set.
+        """
         self._data[key] = value
 
     def __repr__(self):
+        """
+        Returns a string representation of the halos object.
+
+        Returns:
+        --------
+        repr : str
+            A string representation of the halos object.
+        """
         return "<Halos \"" + self.__snaps.filename + "\" num=" + str(len(self._data)) + ">"
     def physical_units(self):
+        """
+        Converts the group catalog units of all Halo objects in the _data dictionary to physical units.
+        """
         for i in self.keys():
             self._data[i].GC_physical_units()

@@ -4,6 +4,7 @@ from pynbody.analysis.profile import Profile
 from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
+from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.TNGsubhalo import subhalos
 from AnastrisTNG.TNGhalo import halos, calc_faceon_matrix
 from functools import reduce

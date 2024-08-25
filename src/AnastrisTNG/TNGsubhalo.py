@@ -10,6 +10,27 @@ from pynbody.analysis.halo import virial_radius
 
 
 class Subhalo:
+    """
+    Represents a single subhalo in the simulation.
+
+    This class contains information about the particles of the subhalo and its corresponding group catalog data.
+    It also includes functions to compute properties specific to this subhalo.
+
+    Attributes:
+    ----------
+    PT : SimArray
+        The particles of the subhalo. Detailed information about this can be found at
+        https://www.tng-project.org/data/docs/specifications/#sec1.
+    GC : SimDict
+        The group catalog for this subhalo. Detailed information about this can be found at
+        https://www.tng-project.org/data/docs/specifications/#sec2.
+
+    Parameters:
+    ----------
+    simarray : SimArray
+        An object containing the particle data for the subhalo.
+
+    """
     def __init__(self,simarray):
         self.PT=simarray
         self.GC=SimDict()
@@ -21,6 +42,9 @@ class Subhalo:
             self.PT._descriptor='Subhalo'+'_'+simarray.filename.split('_')[-1]
         
     def _load_GC(self):
+        """
+        Loads the group catalog data for this halo and updates its properties.
+        """
         proper=subhaloproperties(self.GC['filedir'],
                                  self.GC['Snapshot'],
                                  self.GC['SubhaloID'])
@@ -30,8 +54,21 @@ class Subhalo:
                 self.GC[i].sim=self.PT.ancestor
 
     def GC_physical_units(self,):
+        """
+        Converts the units of the group catalog (GC) properties to physical units.
+        
+        This method updates the `GC` attribute of the `Subhalo` instance to use physical units
+        for its properties, based on predefined unit conversions and the current unit context.
 
+        Conversion is applied only to properties that are not listed in `NotneedtransGCPa`.
 
+        Notes:
+        -----
+        - `self.PT.ancestor.properties['baseunits']` provides the base units for dimensional analysis.
+        - The dimensional projection and conversion are handled using the `units` library.
+        - Properties listed in `NotneedtransGCPa` are skipped during the conversion process.
+        """
+        
         dims =self.PT.ancestor.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
         for k in list(self.GC.keys()):
@@ -139,6 +176,34 @@ class Subhalo:
         return 
     
     def face_on(self,mode='ssc',alignwith='all',shift=True):
+        """
+        Transforms the subhalo's coordinate system to a 'face-on' view.
+
+        This method aligns the subhalo such that the selected component's angular momentum
+        is aligned with the z-axis. It optionally shifts the subhalo to the center of the coordinate system.
+
+        Parameters:
+        -----------
+        mode : str, optional
+            Determines how to center the subhalo. Default is 'ssc'. Other options might include 'virial' or 'custom'.
+        alignwith : str, optional
+            Specifies which component to use for alignment. Options include:
+            - 'all' or 'total': Uses the combined angular momentum of all components.
+            - 'DM', 'dm', 'darkmatter', 'Darkmatter': Uses the angular momentum of dark matter.
+            - 'star', 's', 'Star': Uses the angular momentum of stars.
+            - 'gas', 'g', 'Gas': Uses the angular momentum of gas.
+            - 'baryon', 'baryonic': Uses the combined angular momentum of stars and gas.
+        shift : bool, optional
+            If True, shifts the subhalo to its center of mass and adjusts the coordinate system. Default is True.
+
+        Notes:
+        ------
+        - `self.center(mode=mode)` computes the center of the subhalo based on the specified mode.
+        - `self.vel_center(mode=mode)` computes the velocity center of the subhalo.
+        - `self.R_vir(cen=pos_center)` provides the virial radius based on the computed center.
+        - `calc_faceon_matrix(angmom)` calculates the transformation matrix to align the subhalo to face-on view.
+        - The method assumes the presence of `immediate_mode` for `innerpart` to enable efficient data access.
+        """
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
         Rvir=self.R_vir(cen=pos_center)
@@ -208,22 +273,58 @@ class Subhalo:
 
 
 class subhalos:
+    
     def __init__(self, snaps):
+        """
+        Initializes the subhalos object.
+
+        Parameters:
+        -----------
+        snaps : object
+            An object that contains snapshot properties.
+        """
         self.__snaps = snaps.ancestor  
         self._data = {}
 
     def keys(self):
+        """
+        Returns the keys of the stored subhalo data.
+
+        Returns:
+        --------
+        dict_keys
+            Keys representing the subhalo IDs stored in `_data`.
+        """
         return self._data.keys()
 
     def clear(self):
+        """
+        Clears all stored subhalo data.
+        """
         self._data.clear()
 
     def update(self):
+        """
+        Updates the properties of each stored subhalo.
+        """
         for i in self._data.keys():
             self._data[i].PT=self._generate_value(i) 
     
 
     def GC(self,key):
+        """
+        Retrieves the group catalog data for a specific subhalo parameter.
+
+        Parameters:
+        -----------
+        key : str
+            The key to access in the group catalog data.
+
+        Returns:
+        --------
+        SimArray
+            A SimArray containing the group catalog data for the specified key.
+        """
         k=[]
         for i in self.__snaps.GC_loaded_Subhalo:
             k.append(self[str(i)].GC[key])
@@ -233,10 +334,26 @@ class subhalos:
 
 
     def _load_GC(self):
+        """
+        Loads the group catalog data for all stored subhalos.
+        """
         for i in self._data.keys():
             self._data[i]._load_GC()
 
     def _generate_value(self, key):
+        """
+        Generates a subhalo object for a given key.
+
+        Parameters:
+        -----------
+        key : str
+            The ID of the subhalo to generate.
+
+        Returns:
+        --------
+        Subhalo or None
+            The Subhalo object if the key is valid, otherwise None.
+        """
         if (int(key) < self.__snaps.properties['Subhalos_total']) and (int(key)> -1):
             
 
@@ -257,6 +374,19 @@ class subhalos:
             return None
 
     def __getitem__(self, key):
+        """
+        Retrieves a subhalo object by its key.
+
+        Parameters:
+        -----------
+        key : int, str, list, or np.ndarray
+            The key(s) representing the subhalo ID(s).
+
+        Returns:
+        --------
+        Subhalo or None
+            The Subhalo object if found, otherwise None.
+        """
         if isinstance(key,list) or isinstance(key,np.ndarray):
             key=np.array(key).flatten()
             for j in key:
@@ -279,12 +409,33 @@ class subhalos:
         return self._data[key]
 
     def __setitem__(self, key, value):
+        """
+        Sets or updates a subhalo object in the data store.
+
+        Parameters:
+        -----------
+        key : str
+            The ID of the subhalo.
+        value : Subhalo
+            The Subhalo object to store.
+        """
         self._data[key] = value
 
     def __repr__(self):
+        """
+        Represents the subhalos object as a string.
+
+        Returns:
+        --------
+        str
+            A string representation of the subhalos object.
+        """
 
         return "<Subhalos \"" + self.__snaps.filename + "\" num=" + str(len(self._data)) + ">"
     
     def physical_units(self):
+        """
+        Converts the group catalog data of each stored subhalo to physical units.
+        """
         for i in list(self.keys()):
             self._data[i].GC_physical_units()

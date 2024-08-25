@@ -9,6 +9,22 @@ from pynbody.analysis.profile import Profile
 from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
 
 def cal_potential(sim,targetpos):
+    """
+    Calculates the gravitational potential at target positions.
+
+    Parameters:
+    -----------
+    sim : object
+        The simulation data object containing particle positions and masses.
+    targetpos : array-like
+        The positions where the gravitational potential needs to be calculated.
+
+    Returns:
+    --------
+    phi : SimArray
+        The gravitational potential at the target positions.
+    """
+    
     try:
         eps=sim.properties.get('eps',0)
     except:
@@ -20,22 +36,58 @@ def cal_potential(sim,targetpos):
     phi=SimArray(pot,units.G*sim['mass'].units/sim['pos'].units)
     phi.sim=sim
     return phi
+
+
 def cal_acceleration(sim,targetpos):
-        try:
-            eps=sim.properties.get('eps',0)
-        except:
-            eps=0
-        if eps==0:
-            print('Calculate the gravity without softening length')
-        accelr=AccelTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
-                  np.repeat(eps,len(targetpos)).view(np.ndarray))
-        acc=SimArray(accelr,units.G*sim['mass'].units/sim['pos'].units/sim['pos'].units)
-        acc.sim=sim
-        return acc
+    """
+    Calculates the gravitational acceleration at specified target positions.
+
+    Parameters:
+    -----------
+    sim : object
+        The simulation data object containing particle positions and masses.
+    targetpos : array-like
+        The positions where the gravitational acceleration needs to be calculated.
+
+    Returns:
+    --------
+    acc : SimArray
+        The gravitational acceleration at the target positions.
+    """
+    try:
+        eps=sim.properties.get('eps',0)
+    except:
+        eps=0
+    if eps==0:
+        print('Calculate the gravity without softening length')
+    accelr=AccelTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
+                np.repeat(eps,len(targetpos)).view(np.ndarray))
+    acc=SimArray(accelr,units.G*sim['mass'].units/sim['pos'].units/sim['pos'].units)
+    acc.sim=sim
+    return acc
 
 class profile:
     def __init__(self,sim,ndim=2,type='lin',nbins=100,rmin=0.1,rmax=100.,**kwargs):
-        
+        """
+        Initializes the profile object for different types of particles in the simulation.
+
+        Parameters:
+        -----------
+        sim : object
+            The simulation data object containing particles of different types (e.g., stars, gas, dark matter).
+        ndim : int, optional
+            The number of dimensions for the profile (default is 2).
+        type : str, optional
+            The type of profile ('lin' for linear or other types as needed, default is 'lin').
+        nbins : int, optional
+            The number of bins to use in the profile (default is 100).
+        rmin : float, optional
+            The minimum radius for the profile (default is 0.1).
+        rmax : float, optional
+            The maximum radius for the profile (default is 100.0).
+        **kwargs : additional keyword arguments
+            Additional parameters to pass to the Profile initialization.
+        """
         self.__Pall=Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
         self.__Pstar=Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
         self.__Pgas=Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
@@ -193,6 +245,16 @@ class profile:
 ##merge two simsnap and cover
 
 def Simsnap_cover(f1,f2):
+    """
+    Overwrites the data in simsnap f1 with data from simsnap f2.
+
+    Parameters:
+    -----------
+    f1 : simsnap
+        The target simsnap to be overwritten.
+    f2 : simsnap
+        The source simsnap providing the data.
+    """
     f1._num_particles=len(f2)
     if len(f2.dm)>0:
         f1._family_slice[family.get_family('dm')]= f2._family_slice[family.get_family('dm')]
@@ -223,6 +285,20 @@ def Simsnap_cover(f1,f2):
 
 
 def Simsnap_merge(f1,f2):
+    """
+    Merges twosimsnap f1 and f2 into a new simsnap f3.
+
+    Parameters:
+    -----------
+    f1 : simsnap
+        The first simsnap.
+    f2 : simsnap
+        The second simsnap.
+    Returns:
+    --------
+    f3 : simsnap
+        The new simsnap containing merged data from f1 and f2.
+    """
     f3=new(star=len(f1.s)+len(f2.s),
             gas=len(f1.g)+len(f2.g),
             dm=len(f1.dm)+len(f2.dm),
@@ -309,7 +385,22 @@ def get_parttype(particle_field):
 
 
 
-def get_Snapshot_property(BasePath,Snap):
+def get_Snapshot_property(BasePath : str,Snap : int) ->simdict.SimDict:
+    """
+    Retrieves properties of a specific snapshot.
+
+    Parameters:
+    -----------
+    BasePath : str
+        The base path to the directory containing snapshot files.
+    Snap : int
+        The identifier of the snapshot to be loaded.
+
+    Returns:
+    --------
+    Snapshot : simdict.SimDict
+        A SimDict object containing the properties of the specified snapshot.
+    """
     SnapshotHeader=loadHeader(BasePath,Snap)
     Snapshot=simdict.SimDict()
     Snapshot['filepath']=BasePath
@@ -320,13 +411,27 @@ def get_Snapshot_property(BasePath,Snap):
 
 
 def get_eps_Mdm(Snapshot):
-    '''
-    Gravitational softenings for stars and DM are in comoving kpc 
-    until z=1 after which they are fixed to their z=1 values.
-                                                    ---Dylan Nelson
+    """
+    Retrieves the gravitational softenings for stars and dark matter (DM) based on the simulation run and redshift.
+
+    Parameters:
+    -----------
+    Snapshot : object
+        An object containing snapshot properties, including `z` (redshift) and `run` (simulation run).
+
+    Returns:
+    --------
+    eps_star : SimArray
+        The gravitational softening length for stars.
+    eps_dm : SimArray
+        The gravitational softening length for dark matter.
     
-    Data from https://www.tng-project.org/data/docs/background/
-    '''
+    Notes:
+    ------
+    'Gravitational softenings for stars and DM are in comoving kpc until z=1, 
+    after which they are fixed to their z=1 values.' -- Dylan Nelson.
+    Data is sourced from https://www.tng-project.org/data/docs/background/.
+    """
     MatchRun={
         'TNG50-1':[0.39,3.1e5/1e10],
         'TNG50-2':[0.78,2.5e6/1e10],
@@ -353,6 +458,14 @@ def get_eps_Mdm(Snapshot):
 # all
 @derived_array
 def phi(sim) :
+    """
+    Calculate the gravitational potential for all particles
+
+    Notes:
+    ------
+    This function checks if 'phi' is present in the simulation object. If not, it verifies if 'mass' and 'pos' are available
+    and then calculates the potential using the `_PT_potential` method. If 'mass' and 'pos' are not available, it prints an error message.
+    """
     if 'phi' not in sim.keys():
         print('There is no phi in the keyword')
         if ('mass' in sim.keys()) and ('pos' in sim.keys()):
@@ -366,6 +479,14 @@ def phi(sim) :
 # all
 @derived_array
 def acc(sim) :
+    """
+    Calculate the acceleration for all particles.
+
+    Notes:
+    ------
+    This function checks if 'acc' is present in the simulation object. If not, it verifies if 'mass' and 'pos' are available
+    and then calculates the acceleration using the `_PT_acceleration` method. If 'mass' and 'pos' are not available, it prints an error message.
+    """
     if 'acc' not in sim.keys():
         print('There is no acc in the keyword')
         if ('mass' in sim.keys()) and ('pos' in sim.keys()):
@@ -381,6 +502,14 @@ def acc(sim) :
 # star
 @derived_array
 def tform(sim,):
+    """
+    Calculates the stellar formation time based on the 'aform' array.
+
+    Notes:
+    ------
+    The function uses the 'aform' array to compute the formation time, which is then converted to Gyr. 
+    The calculation requires cosmological parameters like `omegaM0` and `h` from the simulation properties.
+    """
     if 'aform' not in sim.keys():
         print('need aform to cal: GFM_StellarFormationTime')
     import numpy as np
@@ -398,7 +527,14 @@ def tform(sim,):
 # star
 @derived_array
 def age(sim):
-    
+    """
+    Calculates the age of stars based on their formation time.
+
+    Notes:
+    ------
+    The age is computed as the difference between the current simulation time (`t`) and the stellar formation time (`tform`).
+    Particles with a negative age are considered wind particles.
+    """
     return sim.properties['t']-sim['tform']
 
 
@@ -409,11 +545,16 @@ def age(sim):
 # gas
 @derived_array
 def temp(sim):
-    '''
-    TNG use two-phase ISM sub-grid model
-    the gas temperature
-    see Sec.6 of https://www.tng-project.org/data/docs/faq/  
-    '''
+    """
+    Calculates the gas temperature based on the internal energy.
+
+    Notes:
+    ------
+    This function uses the two-phase ISM sub-grid model to calculate the gas temperature.
+    The formula used is based on the internal energy and gas properties.
+    For more information, refer to Sec.6 of the TNG FAQ:
+    https://www.tng-project.org/data/docs/faq/
+    """
     if 'u' not in sim.keys():
         print('need gas InternalEnergy to cal: InternalEnergy')
     gamma = 5./3
@@ -426,9 +567,21 @@ def temp(sim):
 #gas
 @derived_array
 def ne(sim):
-    '''
-    the electron number density
-    '''
+    """
+    Calculates the electron number density from the electron abundance and hydrogen number density.
+
+    Notes:
+    ------
+    This function computes the electron number density using the electron abundance and the hydrogen number density. 
+    It assumes that `ElectronAbundance` and `nH` are available in the simulation object.
+
+    Formula:
+    --------
+    n_e = ElectronAbundance * n_H
+    where:
+    - ElectronAbundance is the fraction of electrons per hydrogen atom.
+    - n_H is the hydrogen number density in cm^-3.
+    """
     n=sim['ElectronAbundance']*sim['nH'].in_units('cm^-3')
     n.units=units.cm**-3
     return n
@@ -436,8 +589,21 @@ def ne(sim):
 #gas
 @derived_array
 def em(sim) :
-    """Emission Measure (n_e^2) per particle to be integrated along LoS"""
+    """
+    Calculates the Emission Measure (n_e^2) per particle, which is used to be integrated along the line of sight (LoS).
 
+    Notes:
+    ------
+    The emission measure is calculated as the square of the electron number density (`ne`). 
+    This value is used in astrophysical applications to estimate the emission from gas in a simulation, 
+    often integrated along the line of sight.
+
+    Formula:
+    --------
+    EM = n_e^2
+    where:
+    - n_e is the electron number density in cm^-3.
+    """
     return (sim['ne']*sim['ne']).in_units('cm^-6')
 
 
@@ -445,20 +611,69 @@ def em(sim) :
 #gas
 @derived_array
 def p(sim):
-    """Pressure"""
+    """
+    Calculates the pressure in the gas.
+
+    Notes:
+    ------
+    The pressure is calculated using the formula:
+    P = (2 / 3) * u * rho
+    where:
+    - u is the internal energy per unit mass.
+    - rho is the gas density in units of solar masses per cubic kiloparsec (Msol kpc^-3).
+
+    The result is converted to Pascals (Pa).
+
+    Formula:
+    --------
+    P = (2 / 3) * u * rho
+    """
     p = sim["u"] * sim["rho"].in_units('Msol kpc^-3') * (2. / 3)
     p.convert_units("Pa")
     return p
 
 @derived_array
 def cs(sim):
-    """Sound speed"""
+    """
+    Calculates the sound speed in the gas.
+
+    Notes:
+    ------
+    The sound speed is calculated using the formula:
+    c_s = sqrt( (5/3) * (k_B * T) / μ )
+    where:
+    - k_B is the Boltzmann constant.
+    - T is the gas temperature.
+    - μ is the mean molecular weight.
+
+    The result is converted to kilometers per second (km/s).
+
+    Formula:
+    --------
+    c_s = sqrt( (5/3) * k * T / μ )
+    """
     return (np.sqrt(5.0 / 3.0 * units.k* sim['temp'] / sim['mu'])).in_units('km s^-1')
 
 
 @derived_array
 def c_s(self):
-    """Ideal gas sound speed based on pressure and density"""
+    """
+    Calculates the sound speed of the gas based on pressure and density.
+
+    Notes:
+    ------
+    The sound speed is calculated using the formula:
+    c_s = sqrt( (5/3) * (p / rho) )
+    where:
+    - p is the gas pressure.
+    - rho is the gas density.
+
+    The result is converted to kilometers per second (km/s).
+
+    Formula:
+    --------
+    c_s = sqrt( (5/3) * p / rho )
+    """
     #x = np.sqrt(5./3.*units.k*self['temp']*self['mu'])
     x = np.sqrt(5. / 3. * self['p'] / self['rho'].in_units('Msol kpc^-3'))
     x.convert_units('km s^-1')
@@ -467,7 +682,28 @@ def c_s(self):
 #gas
 @derived_array
 def c_n_sq(sim) :
-    """Turbulent amplitude C_N^2 for use in SM calculations (e.g. Eqn 20 of Macquart & Koay 2013 ApJ 776 2) """
+    """
+    Calculates the turbulent amplitude C_N^2 for use in spectral calculations, 
+    As in Eqn 20 of Macquart & Koay 2013 (ApJ 776 2).
+
+    Notes:
+    ------
+    This calculation assumes a Kolmogorov spectrum of turbulence below the SPH resolution.
+    
+    The formula used is:
+    C_N^2 = ((beta - 3) / (2 * (2 * π)^(4 - beta))) * L_min^(3 - beta) * EM
+    
+    Where:
+    - beta = 11/3
+    - L_min = 0.1 Mpc (minimum scale of turbulence)
+    - EM = emission measure
+
+    The result is returned in units of m^-20/3.
+
+    Formula:
+    --------
+    C_N^2 = ((β - 3) / (2 * (2 * π)^(4 - β))) * L_min^(3 - β) * EM
+    """
 
     ## Spectrum of turbulence below the SPH resolution, assume Kolmogorov
     beta = 11./3.
@@ -481,31 +717,44 @@ def c_n_sq(sim) :
 #gas
 @derived_array
 def Halpha(sim) :
-    # Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/snapshot/gadgethdf.html#
-    """H alpha intensity (based on Emission Measure n_e^2) per particle to be integrated along LoS"""
+    """
+    Compute the H-alpha intensity for each gas particle based on the emission measure.
 
-    ## Rate at which recombining electrons and protons produce Halpha photons.
-    ## Case B recombination assumed from Draine (2011)
-    #alpha = 2.54e-13 * (sim.g['temp'].in_units('K') / 1e4)**(-0.8163-0.0208*np.log(sim.g['temp'].in_units('K') / 1e4))
-    #alpha.units = units.cm**(3) * units.s**(-1)
+    The H-alpha emission is calculated using the following:
+    - **Emission Measure (EM)**: \( \text{EM} = n_e^2 \), where \( n_e \) is the electron number density.
+    - **H-alpha Intensity**: Computed using the Case B recombination coefficient and the emission measure.
 
-    ## H alpha intensity = coeff * EM
-    ## where coeff is h (c / Lambda_Halpha) / 4Pi) and EM is int rho_e * rho_p * alpha
-    ## alpha = 7.864e-14 T_1e4K from http://astro.berkeley.edu/~ay216/08/NOTES/Lecture08-08.pdf
+    References:
+    - Draine, B. T. (2011). "Physics of the Interstellar and Intergalactic Medium". 
+    - For more details on the H-alpha intensity and its calculation, see: 
+      https://pynbody.readthedocs.io/latest/_modules/pynbody/snapshot/gadgethdf.html
+    - Additional information can be found at: 
+      http://astro.berkeley.edu/~ay216/08/NOTES/Lecture08-08.pdf
 
-    coeff = (6.6260755e-27) * (299792458. / 656.281e-9) / (4.*np.pi) ## units are erg sr^-1
+    """
+    # Define the H-alpha coefficient based on Planck's constant and the speed of light
+    coeff = (6.6260755e-27) * (299792458. / 656.281e-9) / (4.*np.pi) ## units : erg sr^-1
+    
+    # Compute the recombination coefficient for H-alpha
     alpha = coeff * 7.864e-14 * (1e4 / sim['temp'].in_units('K'))
 
-    alpha.units = units.erg * units.cm**(3) * units.s**(-1) * units.sr**(-1) ## It's intensity in erg cm^3 s^-1 sr^-1
+    # Set units for the alpha coefficient
+    alpha.units = units.erg * units.cm**(3) * units.s**(-1) * units.sr**(-1) ## intensity in erg cm^3 s^-1 sr^-1
 
+    # Calculate and return the H-alpha intensity
     return (alpha * sim["em"]).in_units('erg cm^-3 s^-1 sr^-1') # Flux erg cm^-3 s^-1 sr^-1
 
 #gas
 @derived_array
 def nH(sim):
-    '''
-    the total hydrogen number density
-    '''
+    """
+    Calculate the total hydrogen number density for each gas particle.
+
+    The hydrogen number density is computed using the following formula:
+    - Total Hydrogen Number Density: X_H * (rho / m_p)
+      where X_H is the hydrogen mass fraction, rho is the gas density, and m_p is the proton mass.
+
+    """
     nh=sim['XH']*(sim['rho'].in_units('g cm^-3')/units.m_p).in_units('cm^-3')
     nh.units=units.cm**-3
     return nh
@@ -514,9 +763,12 @@ def nH(sim):
 #gas
 @derived_array
 def XH(sim):
-    '''
-    the hydrogen mass fraction
-    '''
+    """
+    Calculate the hydrogen mass fraction for each gas particle.
+
+    If the 'GFM_Metals' data is available in the simulation, the hydrogen mass fraction is extracted
+    from this data. If 'GFM_Metals' is not present, a default value of 0.76 is used.
+    """
     if 'GFM_Metals' in sim.keys():
         Xh=sim['GFM_Metals'].view(np.ndarray).T[0]
         return SimArray(Xh)
@@ -528,10 +780,17 @@ def XH(sim):
 # gas
 @derived_array
 def mu(sim):
-    '''
-    the mean molecular weight
-    XH can be best estimated by GFM_Metals
-    '''
+    """
+    Calculate the mean molecular weight of the gas.
+
+    The mean molecular weight is computed using the hydrogen mass fraction (XH) and the electron
+    abundance. The formula used is:
+        μ = 4 / (1 + 3 * XH + 4 * XH * ElectronAbundance)
+
+    Notes:
+    ------
+    - The 'ElectronAbundance' must be present in the simulation data to compute the mean molecular weight.
+    """
     if 'ElectronAbundance' not in sim.keys():
         print('need gas ElectronAbundance to cal: ElectronAbundance')
     muu=SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
@@ -543,17 +802,43 @@ def mu(sim):
 
 @simdict.SimDict.setter
 def read_Snap_properties(f,SnapshotHeader):
-    '''
-    TNG runs cosmologicaL model:
-        Standard ΛCDM: Planck 2015 results
-            omegaL0=0.6911
-            omegaM0=0.3089
-            omegaB0=0.0486
-            sigama8=0.8159
-            ns=0.9667
-            h=0.6774
-    The box side-length
-    '''
+    """
+    Set cosmological and simulation properties for a given snapshot.
+
+    This function initializes the simulation dictionary with various cosmological parameters and 
+    snapshot-specific properties based on the provided SnapshotHeader.
+
+    Parameters:
+    -----------
+    f : SimDict
+        The simulation dictionary to be updated.
+    SnapshotHeader : dict
+        A dictionary containing header information for the snapshot, including cosmological parameters
+        and box size.
+
+    Cosmological Model (TNG runs):
+    -------------------------------
+    - Standard ΛCDM model based on Planck 2015 results:
+      - omegaL0 (Dark Energy density parameter): 0.6911
+      - omegaM0 (Matter density parameter): 0.3089
+      - omegaB0 (Baryon density parameter): 0.0486
+      - sigma8 (Amplitude of matter density fluctuations): 0.8159
+      - ns (Spectral index of primordial fluctuations): 0.9667
+      - h (Hubble parameter): 0.6774
+
+    Snapshot-Specific Properties:
+    ------------------------------
+    - 'a': Scale factor (time) of the snapshot.
+    - 'h': Hubble parameter.
+    - 'omegaM0': Matter density parameter.
+    - 'omegaL0': Dark energy density parameter.
+    - 'omegaB0': Baryon density parameter (fixed value).
+    - 'sigma8': Amplitude of matter density fluctuations (fixed value).
+    - 'ns': Spectral index (fixed value).
+    - 'boxsize': Size of the simulation box (in kpc), adjusted for the scale factor and Hubble parameter.
+    - 'Halos_total': Total number of halos in the snapshot.
+    - 'Subhalos_total': Total number of subhalos in the snapshot.
+    """
 
     f['a']=SnapshotHeader['Time']
     f['h']=SnapshotHeader['HubbleParam']
@@ -570,6 +855,24 @@ def read_Snap_properties(f,SnapshotHeader):
 
 @simdict.SimDict.setter
 def filepath(f,BasePath):
+    """
+    Set the file path for the simulation data.
+
+    This function updates the simulation dictionary with the base path of the data files and
+    determines the simulation run identifier based on the base path.
+
+    Parameters:
+    -----------
+    f : SimDict
+        The simulation dictionary to be updated.
+    BasePath : str
+        The base directory path where the simulation data files are located.
+
+    This function:
+    - Sets the 'filedir' key to the provided BasePath.
+    - Identifies the simulation run by checking which known run names are present in the BasePath.
+    - Updates the 'run' key in the simulation dictionary with the identified run name.
+    """
     f['filedir']=BasePath
     for i in illustrisTNGruns:
         if i in BasePath:
@@ -580,7 +883,12 @@ def filepath(f,BasePath):
 
 @simdict.SimDict.getter
 def t(d):
-    #(Peebles, p. 317, eq. 13.2)
+    """
+    Calculate the age of the snapshot
+
+    This function uses cosmological parameters and redshift to compute the age of the snapshot.
+    The formula is derived from Peebles (p. 317, eq. 13.2).
+    """
     import math
     omega_m = d['omegaM0']
     redshift=d['z']
@@ -591,6 +899,9 @@ def t(d):
 
 @simdict.SimDict.getter
 def tLB(d):
+    """
+    Calculate the lookback time.
+    """
     import math
     omega_m = d['omegaM0']
     redshift=0.
