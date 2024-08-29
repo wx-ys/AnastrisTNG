@@ -9,12 +9,35 @@ from AnastrisTNG.TNGsubhalo import subhalos
 from AnastrisTNG.TNGhalo import halos, calc_faceon_matrix
 from functools import reduce
 class Snapshot(SimSnap):
+    """
+    This class represents a snapshot of simulated cosmological data, containing information about 
+    the snapshot itself, as well as data on halos and subhalos.
 
+    The Snapshot class inherits from SimSnap and provides additional functionality specific to 
+    handling snapshot data from simulations, including particle data , group catalopg data and cosmological parameters.
 
+    Attributes:
+    -----------
+    properties : simdict
+        Contains various properties of the snapshot, including file path, run information, 
+        and cosmological parameters.
+    subhalos : Subhalos
+        An instance representing the subhalos within the snapshot.
+    halos : Halos
+        An instance representing the halos within the snapshot.
+    """
 
+    def __init__(self,BasePath : str,Snap : int,):
+        """
+        Initializes the Snapshot object with the provided base path and snapshot number.
 
-
-    def __init__(self,BasePath,Snap,):
+        Parameters:
+        -----------
+        BasePath : str
+            The base directory path where the snapshot data is stored.
+        Snap : int
+            The snapshot number corresponding to the desired snapshot in the simulation series.
+        """
         SimSnap.__init__(self)
         self._num_particles = 0
         self._filename = "<created>"
@@ -56,7 +79,23 @@ class Snapshot(SimSnap):
         self.__init_stable_array()
 
     @staticmethod
-    def profile(sim,ndim=2,type='lin',nbins=100,**kwargs):
+    def profile(sim,ndim : int=2,type : str ='lin',nbins : int =100,**kwargs):
+        """
+        Create a profile object for the simulation data.
+        Parameters:
+        -----------
+        sim : SimSnap, subhalo or halo
+            The simulation snapshot or data object to generate the profile from.
+        ndim : int, optional
+            The number of dimensions for the profile (default is 2).
+        type : str, optional
+            The type of profile ('lin' for linear, 'log' for logarithmic, etc.) (default is 'lin').
+        nbins : int, optional
+            The number of bins to use in the profile (default is 100).
+        **kwargs : additional keyword arguments
+            Extra parameters that can be passed to customize the profile generation.
+        """
+        
         pr=Profile(sim,ndim=ndim,type=type,nbins=nbins,**kwargs)
         
         def test_something(self):
@@ -72,7 +111,34 @@ class Snapshot(SimSnap):
     
 
 
-    def physical_units(self, persistent=False):
+    def physical_units(self, persistent : bool =False):
+        """
+        Convert the units of the simulation arrays and properties to physical units.
+
+        This method adjusts the units of the simulation data arrays and properties based on the 
+        base units of the simulation. It ensures that the data is consistent with physical units 
+        (e.g., kpc, Msol, km/s) and converts the data if necessary.
+
+        Parameters:
+        -----------
+        persistent : bool, optional
+            If True, the conversion to physical units will be persistent, meaning that 
+            future calculations and accesses will use these units by default. If False, 
+            the conversion is temporary (default is False).
+
+        Procedure:
+        ----------
+        1. The base units of the simulation are retrieved and used for conversion.
+        2. The method iterates over all the arrays and properties associated with the simulation 
+        and attempts to convert their units to the corresponding physical units.
+        3. ('nH', 'Halpha', 'em', 'ne', 'temp', 'mu', 'c_n_sq', 'p', 'cs', 'c_s', 'acc', 'phi'), 
+        are skipped from conversion.
+        4. The method attempts to project the units onto the physical dimensions, and if successful, 
+        it converts the units.
+        5. The method also converts units for subhalo and halo data.
+        6. If persistent is set to True, the conversion units are stored, making the conversion 
+        permanent for subsequent operations; otherwise, the conversion is temporary.
+        """
 
         dims = self.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
@@ -115,6 +181,10 @@ class Snapshot(SimSnap):
         else:
             self._autoconvert = None
     def load_GC(self):
+        """
+        Load the group catalog (GC) data for halos and subhalos into the snapshot.
+        """
+        
         self.subhalos._load_GC()
         for i in self.subhalos.keys():
             self.__GC_loaded['Subhalo'].add(int(i))
@@ -122,7 +192,10 @@ class Snapshot(SimSnap):
         for i in self.halos.keys():
             self.__GC_loaded['Halo'].add(int(i))
 
-    def load_halo(self,haloID):
+    def load_halo(self,haloID : int):
+        """
+        Load a specific halo's particles and group catalog (GC) data into the snapshot.
+        """
         if haloID in self.__PT_loaded['Halo']:
             print(haloID, ' was already loaded into this Snapshot')
             return
@@ -156,6 +229,10 @@ class Snapshot(SimSnap):
     
 
     def match_subhalo(self,subhaloID: int):
+        """
+        Match particles to a specific subhalo based on the subhalo's ID.
+        """
+        
         parID=np.array([])
         for ty in ['star','gas','dm','bh']:
             thiID=loadSubhalo(self.properties['filedir'],self.snapshot,subhaloID,ty,fields=['ParticleIDs'])
@@ -168,6 +245,10 @@ class Snapshot(SimSnap):
 
 
     def load_subhalo(self, subhaloID:int ):
+        """
+        Load particles and properties associated with a specific subhalo into the snapshot.
+        """
+        
         if not isinstance(subhaloID,int):
             raise TypeError("subhaloID should be int")
         if subhaloID in self.__PT_loaded['Subhalo']:
