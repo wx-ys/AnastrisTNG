@@ -287,7 +287,7 @@ class Snapshot(SimSnap):
             print('No new particles can be loaded')
     
     
-    def load_particle(self,ID,groupType='Subhalo'):
+    def load_particle(self,ID : int , groupType : str ='Subhalo') -> SimSnap:
         '''
         ID: int, halo or subhalo id
         groupType: str, 'Halo' or 'Subhalo'
@@ -364,7 +364,11 @@ class Snapshot(SimSnap):
     
 
 
-    def target_acceleration(self,targetpos):
+    def target_acceleration(self,targetpos : np.ndarray) -> SimArray:
+        """
+        Calculate the acceleration of specific position.
+        """
+        
         try:
             eps=self.properties.get('eps',0)
         except:
@@ -378,7 +382,11 @@ class Snapshot(SimSnap):
         return acc
 
     
-    def target_potential(self,targetpos):
+    def target_potential(self, targetpos : np.ndarray ) -> SimArray:
+        """
+        Calculate the potential of specificc position.
+        """
+        
         try:
             eps=self.properties.get('eps',0)
         except:
@@ -406,6 +414,9 @@ class Snapshot(SimSnap):
 
     
     def check_boundary(self):
+        """
+        Check if any particle lay on the edge of the box.
+        """
         if (self['x'].max()-self['x'].min())>(self.boxsize/2):
             print('On the edge of the box, move to center')
             self.wrap()
@@ -426,6 +437,7 @@ class Snapshot(SimSnap):
         Calculate the potential for each particle
         https://github.com/mikegrudic/pytreegrav
         '''
+        
         self.check_boundary()
         print('Calculating gravity and it will take tens of seconds')
         if len(self['mass'])>1000:
@@ -452,6 +464,7 @@ class Snapshot(SimSnap):
         Calculate the acceleration for each particle
         https://github.com/mikegrudic/pytreegrav
         '''
+        
         self.check_boundary()
         if len(self['mass'])>1000:
             print('Calculate by using Octree')
@@ -473,6 +486,10 @@ class Snapshot(SimSnap):
         return self['acc']
 
     def __init_stable_array(self):
+        """
+        Make 'acc' and 'phi' 'stable'.
+        """
+        
         if '_derived_quantity_registry' in dir(self):
             self._derived_quantity_registry[phi.__name__]=phi
             self._derived_quantity_registry[phi.__name__] = phi
@@ -494,7 +511,11 @@ class Snapshot(SimSnap):
     def __repr__(self):
         return "<Snapshot \"" + self.filename + "\" len=" + str(len(self)) + ">"
 
-    def __set_Snapshot_property(self,BasePath,Snap):
+    def __set_Snapshot_property(self,BasePath : str ,Snap : int):
+        """
+        Init properties (Simdict) from Base Path and Snap.
+        """
+        
         SnapshotHeader=loadHeader(BasePath,Snap)
         self.properties=simdict.SimDict()
         self.properties['read_Snap_properties']=SnapshotHeader
@@ -562,7 +583,7 @@ class Snapshot(SimSnap):
         else:
             return 'locked'
         
-    def shift(self,pos=None,vel=None,phi=None):
+    def shift(self,pos : SimArray =None ,vel : SimArray =None, phi :SimArray =None):
         '''
         shift to the specific position
         then set its pos, vel, phi, acc to 0.
@@ -594,7 +615,7 @@ class Snapshot(SimSnap):
 
 
 
-    def vel_center(self,mode='ssc',pos=None,r_cal='1 kpc'):
+    def vel_center(self,mode : str ='ssc',pos :SimArray =None,r_cal ='1 kpc') -> SimArray:
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
@@ -626,7 +647,7 @@ class Snapshot(SimSnap):
         return vcen
 
 
-    def center(self,mode='ssc'):
+    def center(self,mode : str ='ssc'):
         '''
         The position center of this snapshot
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
@@ -666,7 +687,7 @@ class Snapshot(SimSnap):
 
         return 
     
-    def face_on(self,mode='ssc',alignwith='all',shift=True):
+    def face_on(self,modem :str ='ssc',alignwith : str ='all',shift : bool =True):
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
         if alignwith in ['all','total','All','Total']:
