@@ -1,11 +1,17 @@
 from AnastrisTNG.illustris_python.sublink import loadTree, maxPastMass
+from AnastrisTNG.TNGunits import groupcat_units
+from pynbody.array import SimArray
 import numpy as np
+from typing import List
 
 # Refer to illustris_python.sublink.numMergers, This is a modified version.
-def Merger_History(BasePath : str,snap : int = 99,subID : int =10,
-                   Needfields : list =['SubfindID','SubhaloMassType','SnapNum'],
-                   minMassRatio : float =1e-10, 
-                   massPartType : str ='stars') -> dict:
+def merger_history(BasePath: str, 
+                   snap: int = 99, 
+                   subID: int = 10,
+                   Needfields: List[str] = ['SubfindID','SubhaloMassType','SnapNum'],
+                   minMassRatio: float = 1e-10, 
+                   massPartType: str = 'stars'
+                   ) -> dict:
     """
     This function queries the merger history of a subhalo (galaxy).
 
@@ -81,8 +87,12 @@ def Merger_History(BasePath : str,snap : int = 99,subID : int =10,
                 if ratio >= minMassRatio and ratio <= invMassRatio:
                     numMergers += 1
                     for key in Needfields:
-                        MergerHistory['First-'+key].append(tree[key][fpIndex])
-                        MergerHistory['Next-'+key].append(tree[key][npIndex])
+                        try:
+                            MergerHistory['First-'+key].append(SimArray(tree[key][fpIndex],units=groupcat_units(key)))
+                            MergerHistory['Next-'+key].append(SimArray(tree[key][npIndex]),units=groupcat_units(key))
+                        except: 
+                            MergerHistory['First-'+key].append(tree[key][fpIndex])
+                            MergerHistory['Next-'+key].append(tree[key][npIndex])
                     MergerHistory['MassRatio'].append(ratio)
 
                     MergerHistory['MergerEvents'][tree['SnapNum'][fpIndex]]+=1
@@ -92,3 +102,21 @@ def Merger_History(BasePath : str,snap : int = 99,subID : int =10,
         fpID = tree['FirstProgenitorID'][fpIndex]
     MergerHistory['numMergers']=numMergers
     return MergerHistory
+
+def galaxy_evolution(basePath: str,
+                     snap: int,
+                     subID: int,
+                     fields: List[str],
+                     ) -> dict:
+    """
+    The galaxy evolutionary properties.
+    """
+    
+    
+    tree = loadTree(basePath,snap,subID,fields,onlyMPB=True)
+    for i in tree.keys():
+        try:
+            tree[i]=SimArray(tree[i],units=groupcat_units(i))
+        except:
+            continue
+    return tree

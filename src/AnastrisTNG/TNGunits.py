@@ -24,7 +24,7 @@ NotneedtransGCPa=['SubhaloSFR','SubhaloSFRinHalfRad','SubhaloSFRinMaxRad','Subha
                   'GroupSFR']
 
 
-def HaloPaName(field :str ,) -> str:
+def halo_pa_name(field :str ,) -> str:
     """
     This function modifies the name of a halo parameter to a custom-defined name.
 
@@ -55,7 +55,7 @@ def HaloPaName(field :str ,) -> str:
     else:
         return field
 
-def SubhaloPaName(field :str,) -> str:
+def subhalo_pa_name(field :str,) -> str:
     """
     This function modifies the name of a subhalo parameter to a custom-defined name.
 
@@ -88,7 +88,7 @@ def SubhaloPaName(field :str,) -> str:
         
 
 
-def SnapshotPaName(field : str,) -> str:
+def snapshot_pa_name(field : str,) -> str:
     """
     This function modifies the name of a particle parameter to a custom-defined name.
 
@@ -128,7 +128,7 @@ def SnapshotPaName(field : str,) -> str:
     else:
         return field
 
-def SnapshotsUnits(field : str,) -> units.Unit:
+def snapshot_units(field : str,) -> units.Unit:
     """
     This function provides the unit corresponding to a given particle parameter.
 
@@ -213,7 +213,7 @@ def SnapshotsUnits(field : str,) -> units.Unit:
     else:
         raise KeyError(f"Parameter '{field}' not found in Matchfieldunits.")
 
-def GroupcatUnits(field : str,) -> units.Unit:
+def groupcat_units(field : str,) -> units.Unit:
     """
     This function provides the unit corresponding to a given halo or subhalo parameter.
 

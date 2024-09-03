@@ -66,7 +66,7 @@ def cal_acceleration(sim,targetpos):
     acc.sim=sim
     return acc
 
-class profile:
+class Profile_1D:
     def __init__(self,sim,ndim=2,type='lin',nbins=100,rmin=0.1,rmax=100.,**kwargs):
         """
         Initializes the profile object for different types of particles in the simulation.
@@ -244,7 +244,7 @@ class profile:
 
 ##merge two simsnap and cover
 
-def Simsnap_cover(f1,f2):
+def simsnap_cover(f1,f2):
     """
     Overwrites the data in simsnap f1 with data from simsnap f2.
 
@@ -255,17 +255,26 @@ def Simsnap_cover(f1,f2):
     f2 : simsnap
         The source simsnap providing the data.
     """
+    for i in f1.keys():
+        del f1[i]
     f1._num_particles=len(f2)
     if len(f2.dm)>0:
         f1._family_slice[family.get_family('dm')]= f2._family_slice[family.get_family('dm')]
+        for i in f1.dm.keys():
+            del fi.dm[i]
     if len(f2.s)>0:
         f1._family_slice[family.get_family('star')]= f2._family_slice[family.get_family('star')]
+        for i in f1.s.keys():
+            del f1.s[i]
     if len(f2.g)>0:
         f1._family_slice[family.get_family('gas')]= f2._family_slice[family.get_family('gas')]
+        for i in f1.g.keys():
+            del f1.g[i]
     if len(f2.bh)>0:
         f1._family_slice[family.get_family('bh')]= f2._family_slice[family.get_family('bh')]
-    for i in f1.keys():
-        del f1[i]
+        for i in f1.bh.keys():
+            del f1.bh[i]
+            
     f1._create_arrays(["pos", "vel"], 3)
     f1._create_arrays(["mass"], 1)
     f1._decorate()
@@ -284,7 +293,7 @@ def Simsnap_cover(f1,f2):
 
 
 
-def Simsnap_merge(f1,f2):
+def simsnap_merge(f1,f2):
     """
     Merges twosimsnap f1 and f2 into a new simsnap f3.
 
@@ -537,7 +546,94 @@ def age(sim):
     """
     return sim.properties['t']-sim['tform']
 
+#star
+@derived_array
+def U_mag(sim):
+    """
+    see https://www.tng-project.org/data/docs/specifications/#parttype4 for details
+    In detail, these are: 
+    Buser's X filter, where X=U,B3,V (Vega magnitudes), 
+    then IR K filter + Palomar 200 IR detectors + atmosphere.57 (Vega), 
+    then SDSS Camera X Response Function, airmass = 1.3 (June 2001), where X=g,r,i,z (AB magnitudes). 
+    They can be found in the filters.log file in the BC03 package. 
+    The details on the four SDSS filters can be found in Stoughton et al. 2002, section 3.2.1.
+    """
+    
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,0]
 
+#star
+@derived_array
+def B_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,1]
+
+#star
+@derived_array
+def V_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,2]
+
+#star
+@derived_array
+def K_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,3]
+
+#star
+@derived_array
+def g_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,4]
+
+#star
+@derived_array
+def r_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,5]
+
+
+#star
+@derived_array
+def i_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,6]
+
+#star
+@derived_array
+def z_mag(sim):
+    """
+    """
+    if 'GFM_StellarPhotometrics' not in sim.keys():
+        print("Need 'GFM_StellarPhotometrics' of star ")
+    
+    return sim['GFM_StellarPhotometrics'][:,7]
 
 
 

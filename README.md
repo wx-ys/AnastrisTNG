@@ -25,3 +25,8 @@ Snapshot.load_halo(400)    #load a halo(id=400) data
 ## License
 
 [MIT](LICENSE) © Shuai Lu
+
+## Acknowledgments
+* [illustris_python](https://github.com/illustristng/illustris_python)
+* [pytreegrav](https://github.com/mikegrudic/pytreegrav)
+* [pynbody](https://github.com/pynbody/pynbody)

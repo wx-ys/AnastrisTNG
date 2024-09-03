@@ -286,7 +286,7 @@ class Halo:
     def __repr__(self):
        return "<Halo \"" + self.PT.ancestor.filename + "\" HaloID=" + str(self.GC['HaloID']) + ">"
 
-class halos:
+class Halos:
     def __init__(self, snaps):
         """
         Initializes the halos object.

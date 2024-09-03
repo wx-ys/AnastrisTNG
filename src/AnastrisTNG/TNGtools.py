@@ -1,54 +1,13 @@
+from typing import List
+import multiprocessing as mp
+
 import numpy as np
-from AnastrisTNG.illustris_python.snapshot import *
 import h5py
 from tqdm import tqdm
-import multiprocessing as mp
-'''
-# form https://www.tng-project.org/data/forum/topic/274/match-snapshot-particles-with-their-halosubhalo/
-# Careful memory usage
-def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuzz=True,
-                                     ):
-   #  SubhaloLenType, SnapOffsetsSubhalo
-    """ For a particle type ptName and snapshot indices for that type indsType, compute the
-        subhalo ID to which each particle index belongs. 
-        If flagFuzz is True (default), particles in FoF fuzz are marked as outside any subhalo,
-        otherwise they are attributed to the closest (prior) subhalo.
-    """
-    gcLenType = SubhaloLenType[:,sP.ptNum(ptName)]
-    gcOffsetsType = SnapOffsetsSubhalo[:,sP.ptNum(ptName)][:-1]
 
-    # val gives the indices of gcOffsetsType such that, if each indsType was inserted
-    # into gcOffsetsType just -before- its index, the order of gcOffsetsType is unchanged
-    # note 1: (gcOffsetsType-1) so that the case of the particle index equaling the
-    # subhalo offset (i.e. first particle) works correctly
-    # note 2: np.ss()-1 to shift to the previous subhalo, since we want to know the
-    # subhalo offset index -after- which the particle should be inserted
-    val = np.searchsorted( gcOffsetsType - 1, indsType ) - 1
-    val = val.astype('int32')
+from AnastrisTNG.illustris_python.snapshot import *
 
-    # search and flag all matches where the indices exceed the length of the
-    # subhalo they have been assigned to, e.g. either in fof fuzz, in subhalos with
-    # no particles of this type, or not in any subhalo at the end of the file
-    if flagFuzz:
-        gcOffsetsMax = gcOffsetsType + gcLenType - 1
-        ww = np.where( indsType > gcOffsetsMax[val] )[0]
-
-        if len(ww):
-            val[ww] = -1
-
-    if debug:
-        # for all inds we identified in subhalos, verify parents directly
-        for i in range(len(indsType)):
-            if val[i] < 0:
-                continue
-            assert indsType[i] >= gcOffsetsType[val[i]]
-            if flagFuzz:
-                assert indsType[i] < gcOffsetsType[val[i]]+gcLenType[val[i]]
-                assert gcLenType[val[i]] != 0
-
-    return val
-'''
-def process_file(file_info):
+def _process_file(file_info):
     """
     Process a single file to find tracers of specified IDs (ParentIDs or TracerIDs).
     This function is used by the `findtracer_MP` function to distribute tasks among multiple processes.
@@ -96,30 +55,34 @@ def process_file(file_info):
     fields = ['ParentID', 'TracerID']
     
     with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
+       # print('open file')
         if gName not in f:
+            print('skip',fileNum)
             return result_local
-        
+      #  print(len(f['PartType3']['TracerID'][:]))
         if istracerid:
             findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
         else:
             findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
         
-        if findresult==False:
+        if not findresult:
+            print('some found')
             ParentID = np.array(f[gName]['ParentID'])
             TracerID = np.array(f[gName]['TracerID'])
             
             if istracerid:
-                Findepatticle = np.isin(TracerID, findIDset)
+                Findepatticle = np.isin(TracerID, list(findIDset))
             else:
-                Findepatticle = np.isin(ParentID, findIDset)
+                Findepatticle = np.isin(ParentID, list(findIDset))
             
             result_local['TracerID'] = TracerID[Findepatticle]
             result_local['ParentID'] = ParentID[Findepatticle]
+            print('find',len(result_local['TracerID']))
     
     return result_local
 
 
-def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
+def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid: bool = False, NP: int = 6) -> dict:
     """
     Find the tracers of specified IDs (ParentIDs or TracerIDs) using multiprocessing to speed up the search.
 
@@ -133,8 +96,8 @@ def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
         The base directory path where simulation data is stored.
     snapNum : int
         Snapshot number to search within.
-    findID : list 
-        1D array of the specified IDs (ParentIDs or TracerIDs) to find. Default is None.
+    findID : list [int]
+        1D array of the specified IDs (ParentIDs or TracerIDs) to find.
     istracerid : bool, optional
         If True, match TracerIDs; if False, match ParentIDs. Default is False.
     NP : int, optional
@@ -200,9 +163,10 @@ def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
         # progressing bar
         with tqdm(total=len(file_infos)) as pbar:
             # Use imap to process files and update the progress bar
-            for result_local in pool.imap(process_file, file_infos):
+            for result_local in pool.imap_unordered(_process_file, file_infos):
                 result['TracerID'] = np.append(result['TracerID'], result_local['TracerID'])
                 result['ParentID'] = np.append(result['ParentID'], result_local['ParentID'])
+                print(len(result_local['ParentID']),len(result['ParentID']))
                 pbar.update(1)
     
     # Convert to integer type
@@ -213,8 +177,7 @@ def findtracer_MP(basePath, snapNum, findID=None, istracerid=False,NP=6):
 
 
 
-def findtracer(basePath : str,snapNum : int, findID : list =None,
-               istracerid : bool = False,) -> dict:
+def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bool = False,) -> dict:
     """ 
     Find the tracers of specified IDs (ParentIDs or TracerIDs) in the simulation data.
 
@@ -350,3 +313,49 @@ def findtracer(basePath : str,snapNum : int, findID : list =None,
     result['TracerID']=result['TracerID'].astype(int)
     result['ParentID']=result['ParentID'].astype(int)
     return result
+
+'''
+# form https://www.tng-project.org/data/forum/topic/274/match-snapshot-particles-with-their-halosubhalo/
+# Careful memory usage
+def inverseMapPartIndicesToSubhaloIDs(sP, indsType, ptName, debug=False, flagFuzz=True,
+                                     ):
+   #  SubhaloLenType, SnapOffsetsSubhalo
+    """ For a particle type ptName and snapshot indices for that type indsType, compute the
+        subhalo ID to which each particle index belongs. 
+        If flagFuzz is True (default), particles in FoF fuzz are marked as outside any subhalo,
+        otherwise they are attributed to the closest (prior) subhalo.
+    """
+    gcLenType = SubhaloLenType[:,sP.ptNum(ptName)]
+    gcOffsetsType = SnapOffsetsSubhalo[:,sP.ptNum(ptName)][:-1]
+
+    # val gives the indices of gcOffsetsType such that, if each indsType was inserted
+    # into gcOffsetsType just -before- its index, the order of gcOffsetsType is unchanged
+    # note 1: (gcOffsetsType-1) so that the case of the particle index equaling the
+    # subhalo offset (i.e. first particle) works correctly
+    # note 2: np.ss()-1 to shift to the previous subhalo, since we want to know the
+    # subhalo offset index -after- which the particle should be inserted
+    val = np.searchsorted( gcOffsetsType - 1, indsType ) - 1
+    val = val.astype('int32')
+
+    # search and flag all matches where the indices exceed the length of the
+    # subhalo they have been assigned to, e.g. either in fof fuzz, in subhalos with
+    # no particles of this type, or not in any subhalo at the end of the file
+    if flagFuzz:
+        gcOffsetsMax = gcOffsetsType + gcLenType - 1
+        ww = np.where( indsType > gcOffsetsMax[val] )[0]
+
+        if len(ww):
+            val[ww] = -1
+
+    if debug:
+        # for all inds we identified in subhalos, verify parents directly
+        for i in range(len(indsType)):
+            if val[i] < 0:
+                continue
+            assert indsType[i] >= gcOffsetsType[val[i]]
+            if flagFuzz:
+                assert indsType[i] < gcOffsetsType[val[i]]+gcLenType[val[i]]
+                assert gcLenType[val[i]] != 0
+
+    return val
+'''

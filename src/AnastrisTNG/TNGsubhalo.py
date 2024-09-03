@@ -272,7 +272,7 @@ class Subhalo:
 
 
 
-class subhalos:
+class Subhalos:
     
     def __init__(self, snaps):
         """

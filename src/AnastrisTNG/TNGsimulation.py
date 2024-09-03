@@ -5,8 +5,8 @@ from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,load
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
-from AnastrisTNG.TNGsubhalo import subhalos
-from AnastrisTNG.TNGhalo import halos, calc_faceon_matrix
+from AnastrisTNG.TNGsubhalo import Subhalos
+from AnastrisTNG.TNGhalo import Halos, calc_faceon_matrix
 from functools import reduce
 class Snapshot(SimSnap):
     """
@@ -60,8 +60,8 @@ class Snapshot(SimSnap):
         self._filename = self._filename+'_'+'snapshot'+str(self.snapshot)
 
         self.__set_load_particle()
-        self.subhalos=subhalos(self)
-        self.halos=halos(self)
+        self.subhalos=Subhalos(self)
+        self.halos=Halos(self)
         self.__canloadPT=True
         self.__PT_loaded={'Halo':set(),
                         'Subhalo':set()}
@@ -77,38 +77,6 @@ class Snapshot(SimSnap):
         self.__acc=SimArray([0.,0.,0.],units.km/units.s**2)
         self.__acc.sim=self
         self.__init_stable_array()
-
-    @staticmethod
-    def profile(sim,ndim : int=2,type : str ='lin',nbins : int =100,**kwargs):
-        """
-        Create a profile object for the simulation data.
-        Parameters:
-        -----------
-        sim : SimSnap, subhalo or halo
-            The simulation snapshot or data object to generate the profile from.
-        ndim : int, optional
-            The number of dimensions for the profile (default is 2).
-        type : str, optional
-            The type of profile ('lin' for linear, 'log' for logarithmic, etc.) (default is 'lin').
-        nbins : int, optional
-            The number of bins to use in the profile (default is 100).
-        **kwargs : additional keyword arguments
-            Extra parameters that can be passed to customize the profile generation.
-        """
-        
-        pr=Profile(sim,ndim=ndim,type=type,nbins=nbins,**kwargs)
-        
-        def test_something(self):
-
-            return self['rbins']
-
-        
-        pr._profile_registry[test_something.__name__]=test_something
-        return pr
-
-
-
-    
 
 
     def physical_units(self, persistent : bool =False):
@@ -204,8 +172,8 @@ class Snapshot(SimSnap):
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
             f=self.load_particle(ID=haloID,groupType='Halo')
 
-            fmerge=Simsnap_merge(self,f)
-            Simsnap_cover(self,fmerge)
+            fmerge=simsnap_merge(self,f)
+            simsnap_cover(self,fmerge)
 
             ind = np.empty((len(self),), dtype='int8')
             for i, f in enumerate(self.ancestor.families()):
@@ -267,8 +235,8 @@ class Snapshot(SimSnap):
             f=self.load_particle(ID=subhaloID,groupType='Subhalo')
 
 
-            fmerge=Simsnap_merge(self,f)
-            Simsnap_cover(self,fmerge)
+            fmerge=simsnap_merge(self,f)
+            simsnap_cover(self,fmerge)
 
             ind = np.empty((len(self),), dtype='int8')
             for i, f in enumerate(self.ancestor.families()):
@@ -316,9 +284,9 @@ class Snapshot(SimSnap):
                     loaddata=loadSubset(self.properties['filedir'], self.snapshot, party,
                                             self.load_particle_para[party+'_fields'],subset=subset)
                     for i in self.load_particle_para[party+'_fields']:
-                        f.dm[SnapshotPaName(i)]=SimArray(loaddata[i],SnapshotsUnits(i))
+                        f.dm[snapshot_pa_name(i)]=SimArray(loaddata[i],snapshot_units(i))
                     if 'Masses' in self.load_particle_para['Basefields']:
-                        f.dm['mass']=self.properties['Mdm'].in_units(SnapshotsUnits('Masses'))*np.ones(len(f.dm))
+                        f.dm['mass']=self.properties['Mdm'].in_units(snapshot_units('Masses'))*np.ones(len(f.dm))
                         self.load_particle_para[party+'_fields'].append('Masses')
                     f.dm[groupType+'ID']=SimArray(ID*np.ones(len(f.dm)).astype(np.int32))
                     if groupType =='Halo':
@@ -330,7 +298,7 @@ class Snapshot(SimSnap):
                     loaddata=loadSubset(self.properties['filedir'], self.snapshot, party,
                                             self.load_particle_para[party+'_fields'],subset=subset)
                     for i in self.load_particle_para[party+'_fields']:
-                        f.s[SnapshotPaName(i)]=SimArray(loaddata[i],SnapshotsUnits(i))
+                        f.s[snapshot_pa_name(i)]=SimArray(loaddata[i],snapshot_units(i))
                     f.s[groupType+'ID']=SimArray(ID*np.ones(len(f.s)).astype(np.int32))
                     if groupType =='Halo':
                         f.s['SubhaloID']=SimArray(-1*np.ones(len(f.s)).astype(np.int32))
@@ -341,7 +309,7 @@ class Snapshot(SimSnap):
                     loaddata=loadSubset(self.properties['filedir'], self.snapshot, party,
                                             self.load_particle_para[party+'_fields'],subset=subset)
                     for i in self.load_particle_para[party+'_fields']:
-                        f.g[SnapshotPaName(i)]=SimArray(loaddata[i],SnapshotsUnits(i))
+                        f.g[snapshot_pa_name(i)]=SimArray(loaddata[i],snapshot_units(i))
                     f.g[groupType+'ID']=SimArray(ID*np.ones(len(f.g)).astype(np.int32))
                     if groupType =='Halo':
                         f.g['SubhaloID']=SimArray(-1*np.ones(len(f.g)).astype(np.int32))
@@ -352,7 +320,7 @@ class Snapshot(SimSnap):
                     loaddata=loadSubset(self.properties['filedir'], self.snapshot, party,
                                             self.load_particle_para[party+'_fields'],subset=subset)
                     for i in self.load_particle_para[party+'_fields']:
-                        f.bh[SnapshotPaName(i)]=SimArray(loaddata[i],SnapshotsUnits(i))
+                        f.bh[snapshot_pa_name(i)]=SimArray(loaddata[i],snapshot_units(i))
                     f.bh[groupType+'ID']=SimArray(ID*np.ones(len(f.bh)).astype(np.int32))
                     if groupType =='Halo':
                         f.bh['SubhaloID']=SimArray(-1*np.ones(len(f.bh)).astype(np.int32))
@@ -687,7 +655,7 @@ class Snapshot(SimSnap):
 
         return 
     
-    def face_on(self,modem :str ='ssc',alignwith : str ='all',shift : bool =True):
+    def face_on(self,mode :str ='ssc',alignwith : str ='all',shift : bool =True):
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
         if alignwith in ['all','total','All','Total']:
