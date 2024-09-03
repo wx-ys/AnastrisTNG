@@ -3,7 +3,11 @@ AnastrisTNG is a package for processing and analyzing data from the cosmological
 
 ## Installation
 
-clone the repo(https://github.com/wx-ys/AnastrisTNG.git) and run ```python setup.py install``` from the repo directory.
+```
+git clone https://github.com/wx-ys/AnastrisTNG.git
+cd AnastrisTNG
+pip install .
+```
 
 ## Usage
 
