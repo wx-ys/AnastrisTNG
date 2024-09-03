@@ -1,5 +1,5 @@
 ## Introduction
-AnastrisTNG is a package for processing and analyzing data from the cosmological simulation IllustrisTNG.
+AnastrisTNG is a python package for processing and analyzing the cosmological simulation [IllustrisTNG](https://www.tng-project.org/).
 
 ## Installation
 
