@@ -1,13 +1,15 @@
+from functools import reduce
+
 from pynbody.snapshot import SimSnap
 from pynbody import derived_array,filt
 from pynbody.analysis.profile import Profile
+
 from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.TNGsubhalo import Subhalos
 from AnastrisTNG.TNGhalo import Halos, calc_faceon_matrix
-from functools import reduce
 class Snapshot(SimSnap):
     """
     This class represents a snapshot of simulated cosmological data, containing information about 
@@ -54,7 +56,7 @@ class Snapshot(SimSnap):
         self.__set_Snapshot_property(BasePath,Snap)
         self.properties['eps'],self.properties['Mdm']=get_eps_Mdm(self)
         self.properties['baseunits']=[units.Unit(x) for x in ('kpc', 'km s^-1', 'Msol')]
-        for i in self.properties.keys():
+        for i in self.properties:
             if isinstance(self.properties[i],SimArray):
                 self.properties[i].sim=self
         self._filename = self._filename+'_'+'snapshot'+str(self.snapshot)
@@ -120,7 +122,7 @@ class Snapshot(SimSnap):
         for ar in all:
             self._autoconvert_array_unit(ar.ancestor, dims,urc)
 
-        for k in list(self.properties.keys()):
+        for k in list(self.properties):
             v = self.properties[k]
             if isinstance(v, units.UnitBase):
                 try:
@@ -487,7 +489,7 @@ class Snapshot(SimSnap):
         SnapshotHeader=loadHeader(BasePath,Snap)
         self.properties=simdict.SimDict()
         self.properties['read_Snap_properties']=SnapshotHeader
-        for i in self.properties.keys():
+        for i in self.properties:
             if 'sim' in dir(self.properties[i]):
                 self.properties[i].sim=self
         self.properties['filepath']=BasePath
@@ -565,12 +567,12 @@ class Snapshot(SimSnap):
             self['vel']-=vel
             self.__vel.convert_units(self['vel'].units)
             self.__vel+=vel
-        if (phi is not None) and ('phi' in self.keys()):
+        if (phi is not None) and ('phi' in self):
             self['phi']-=phi
             self.__phi.convert_units(self['phi'].units)
             self.__phi+=phi
 
-        if 'acc' in self.keys():
+        if 'acc' in self:
             theacc=self.target_acceleration(np.array([[0,0,0],pos]))[1]
             self['acc']-=theacc
             self.__acc.convert_units(self['acc'].units)

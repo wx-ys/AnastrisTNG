@@ -18,7 +18,7 @@ BasePath = 'filepath'
 snap=99  #snapshot
 
 Snapshot=TNGsimulation.Snapshot(BasePath,snap)
-Snapshot.load_halo(400)    #load a halo(id=400) data
+Snapshot.load_halo(400)    #load a halo(id=400)
 ```
 
 ## Maintainers

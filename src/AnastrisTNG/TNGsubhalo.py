@@ -49,7 +49,7 @@ class Subhalo:
                                  self.GC['Snapshot'],
                                  self.GC['SubhaloID'])
         self.GC.update(proper)
-        for i in self.GC.keys():
+        for i in self.GC:
             if isinstance(self.GC[i],SimArray):
                 self.GC[i].sim=self.PT.ancestor
 
@@ -71,7 +71,7 @@ class Subhalo:
         
         dims =self.PT.ancestor.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
-        for k in list(self.GC.keys()):
+        for k in list(self.GC):
             if k in NotneedtransGCPa:
                 continue
 
@@ -231,7 +231,7 @@ class Subhalo:
         trans =calc_faceon_matrix(angmom)
         if shift:
             phimax=None
-            if 'phi' in self.PT.keys():
+            if 'phi' in self.PT:
                 R200=self.R_vir(cen=pos_center,overden=200)
                 phimax=self.PT[filt.Annulus(r1=R200,r2=Rvir,cen=pos_center,)]['phi'].mean()
             self.PT.ancestor.shift(pos=pos_center,vel=vel_center,phi=phimax)
@@ -307,7 +307,7 @@ class Subhalos:
         """
         Updates the properties of each stored subhalo.
         """
-        for i in self._data.keys():
+        for i in self._data:
             self._data[i].PT=self._generate_value(i) 
     
 
@@ -337,7 +337,7 @@ class Subhalos:
         """
         Loads the group catalog data for all stored subhalos.
         """
-        for i in self._data.keys():
+        for i in self._data:
             self._data[i]._load_GC()
 
     def _generate_value(self, key):
@@ -358,7 +358,7 @@ class Subhalos:
             
 
 
-            if 'SubhaloID' in self.__snaps.keys():
+            if 'SubhaloID' in self.__snaps:
                 property_value = self.__snaps[np.where(self.__snaps['SubhaloID']==int(key))]
             else:
                 property_value = self.__snaps[slice(0,0)]

@@ -114,7 +114,7 @@ def galaxy_evolution(basePath: str,
     
     
     tree = loadTree(basePath,snap,subID,fields,onlyMPB=True)
-    for i in tree.keys():
+    for i in tree:
         try:
             tree[i]=SimArray(tree[i],units=groupcat_units(i))
         except:

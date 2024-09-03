@@ -12,11 +12,11 @@ def get_Subhalo_property(BasePath,Snap,subhaloID):
     single=subhaloproperties(BasePath,Snap,subhaloID)
     Subhalo=simdict.SimDict()
 
-    for i in single.keys():
+    for i in single:
         Subhalo[subhalo_pa_name(i)]=single[i]
     Subhalo['ID']=subhaloID
     snapshot=get_Snapshot_property(BasePath,Snap)
-    for i in snapshot.keys():
+    for i in snapshot:
         Subhalo[i]=snapshot[i]
     return Subhalo
 
@@ -26,11 +26,11 @@ def get_Halo_property(BasePath,Snap,haloID):
     single=haloproperties(BasePath,Snap,haloID)
     Halo1=simdict.SimDict()
 
-    for i in single.keys():
+    for i in single:
         Halo1[halo_pa_name(i)]=single[i]
     Halo1['ID']=haloID
     snapshot=get_Snapshot_property(BasePath,Snap)
-    for i in snapshot.keys():
+    for i in snapshot:
         Halo1[i]=snapshot[i]
     return Halo1
 
@@ -38,7 +38,7 @@ def get_Halo_property(BasePath,Snap,haloID):
 def subhaloproperties(BasePath,Snap,subhaloID):
 
     single=loadSingle(BasePath,Snap,subhaloID=subhaloID)
-    for i in single.keys():
+    for i in single:
         single[i]=SimArray(single[i],groupcat_units(i))
 
     return single
@@ -47,7 +47,7 @@ def subhaloproperties(BasePath,Snap,subhaloID):
 def haloproperties(BasePath,Snap,haloID):
 
     single=loadSingle(BasePath,Snap,haloID=haloID)
-    for i in single.keys():
+    for i in single:
         single[i]=SimArray(single[i],groupcat_units(i))
 
     return single

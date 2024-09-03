@@ -50,7 +50,7 @@ def halo_pa_name(field :str ,) -> str:
     Matchfield={
 
     }
-    if field in Matchfield.keys():
+    if field in Matchfield:
         return Matchfield[field]
     else:
         return field
@@ -81,7 +81,7 @@ def subhalo_pa_name(field :str,) -> str:
     Matchfield={
 
     }
-    if field in Matchfield.keys():
+    if field in Matchfield:
         return Matchfield[field]
     else:
         return field
@@ -123,7 +123,7 @@ def snapshot_pa_name(field : str,) -> str:
         
         'StarFormationRate': 'sfr',
     }
-    if field in Matchfield.keys():
+    if field in Matchfield:
         return Matchfield[field]
     else:
         return field

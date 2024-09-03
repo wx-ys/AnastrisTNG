@@ -255,40 +255,40 @@ def simsnap_cover(f1,f2):
     f2 : simsnap
         The source simsnap providing the data.
     """
-    for i in f1.keys():
+    for i in f1:
         del f1[i]
     f1._num_particles=len(f2)
     if len(f2.dm)>0:
         f1._family_slice[family.get_family('dm')]= f2._family_slice[family.get_family('dm')]
-        for i in f1.dm.keys():
-            del fi.dm[i]
+        for i in f1.dm:
+            del f1.dm[i]
     if len(f2.s)>0:
         f1._family_slice[family.get_family('star')]= f2._family_slice[family.get_family('star')]
-        for i in f1.s.keys():
+        for i in f1.s:
             del f1.s[i]
     if len(f2.g)>0:
         f1._family_slice[family.get_family('gas')]= f2._family_slice[family.get_family('gas')]
-        for i in f1.g.keys():
+        for i in f1.g:
             del f1.g[i]
     if len(f2.bh)>0:
         f1._family_slice[family.get_family('bh')]= f2._family_slice[family.get_family('bh')]
-        for i in f1.bh.keys():
+        for i in f1.bh:
             del f1.bh[i]
             
     f1._create_arrays(["pos", "vel"], 3)
     f1._create_arrays(["mass"], 1)
     f1._decorate()
     if len(f1.dm)>0:
-        for i in f2.dm.keys():
+        for i in f2.dm:
             f1.dm[i]=f2.dm[i]
     if len(f1.s)>0:
-        for i in f2.s.keys():
+        for i in f2.s:
             f1.s[i]=f2.s[i]
     if len(f1.g)>0:
-        for i in f2.g.keys():
+        for i in f2.g:
             f1.g[i]=f2.g[i]
     if len(f1.bh)>0:
-        for i in f2.bh.keys():
+        for i in f2.bh:
             f1.bh[i]=f2.bh[i]
 
 
@@ -315,46 +315,46 @@ def simsnap_merge(f1,f2):
             order='dm,star,gas,bh')
     if len(f3.s)>0:
         if len(f1.s)==0:
-            for i in f2.s.keys():
+            for i in f2.s:
                 f3.s[i]=f2.s[i]
         elif len(f2.s)==0:
-            for i in f1.s.keys():
+            for i in f1.s:
                 f3.s[i]=f1.s[i]
         else:
-            for i in f2.s.keys():
+            for i in f2.s:
                 f3.s[i]=SimArray(np.append(f1.s[i],f2.s[i],axis=0),f2.s[i].units)
 
     if len(f3.dm)>0:
         if len(f1.dm)==0:
-            for i in f2.dm.keys():
+            for i in f2.dm:
                 f3.dm[i]=f2.dm[i]
         elif len(f2.dm)==0:
-            for i in f1.dm.keys():
+            for i in f1.dm:
                 f3.dm[i]=f1.dm[i]
         else:
-            for i in f2.dm.keys():
+            for i in f2.dm:
                 f3.dm[i]=SimArray(np.append(f1.dm[i],f2.dm[i],axis=0),f2.dm[i].units)
 
     if len(f3.g)>0:
         if len(f1.g)==0:
-            for i in f2.g.keys():
+            for i in f2.g:
                 f3.g[i]=f2.g[i]
         elif len(f2.g)==0:
-            for i in f1.g.keys():
+            for i in f1.g:
                 f3.g[i]=f1.g[i]
         else:
-            for i in f2.g.keys():
+            for i in f2.g:
                 f3.g[i]=SimArray(np.append(f1.g[i],f2.g[i],axis=0),f2.g[i].units)
 
     if len(f3.bh)>0:
         if len(f1.bh)==0:
-            for i in f2.bh.keys():
+            for i in f2.bh:
                 f3.bh[i]=f2.bh[i]
         elif len(f2.bh)==0:
-            for i in f1.bh.keys():
+            for i in f1.bh:
                 f3.bh[i]=f1.bh[i]
         else:
-            for i in f2.bh.keys():
+            for i in f2.bh:
                 f3.bh[i]=SimArray(np.append(f1.bh[i],f2.bh[i],axis=0),f2.bh[i].units)
 
     return f3
@@ -475,9 +475,9 @@ def phi(sim) :
     This function checks if 'phi' is present in the simulation object. If not, it verifies if 'mass' and 'pos' are available
     and then calculates the potential using the `_PT_potential` method. If 'mass' and 'pos' are not available, it prints an error message.
     """
-    if 'phi' not in sim.keys():
+    if 'phi' not in sim:
         print('There is no phi in the keyword')
-        if ('mass' in sim.keys()) and ('pos' in sim.keys()):
+        if ('mass' in sim) and ('pos' in sim):
             sim.ancestor._PT_potential()
         else:
             print('\'phi\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
@@ -496,9 +496,9 @@ def acc(sim) :
     This function checks if 'acc' is present in the simulation object. If not, it verifies if 'mass' and 'pos' are available
     and then calculates the acceleration using the `_PT_acceleration` method. If 'mass' and 'pos' are not available, it prints an error message.
     """
-    if 'acc' not in sim.keys():
+    if 'acc' not in sim:
         print('There is no acc in the keyword')
-        if ('mass' in sim.keys()) and ('pos' in sim.keys()):
+        if ('mass' in sim) and ('pos' in sim):
             sim.ancestor._PT_acceleration()
         else:
             print('\'acc\' fails to be calculated. The keys \'mass\' and \'pos\' are required ')
@@ -519,7 +519,7 @@ def tform(sim,):
     The function uses the 'aform' array to compute the formation time, which is then converted to Gyr. 
     The calculation requires cosmological parameters like `omegaM0` and `h` from the simulation properties.
     """
-    if 'aform' not in sim.keys():
+    if 'aform' not in sim:
         print('need aform to cal: GFM_StellarFormationTime')
     import numpy as np
     omega_m = sim.properties['omegaM0']
@@ -559,7 +559,7 @@ def U_mag(sim):
     The details on the four SDSS filters can be found in Stoughton et al. 2002, section 3.2.1.
     """
     
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,0]
@@ -569,7 +569,7 @@ def U_mag(sim):
 def B_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,1]
@@ -579,7 +579,7 @@ def B_mag(sim):
 def V_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,2]
@@ -589,7 +589,7 @@ def V_mag(sim):
 def K_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,3]
@@ -599,7 +599,7 @@ def K_mag(sim):
 def g_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,4]
@@ -609,7 +609,7 @@ def g_mag(sim):
 def r_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,5]
@@ -620,7 +620,7 @@ def r_mag(sim):
 def i_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,6]
@@ -630,7 +630,7 @@ def i_mag(sim):
 def z_mag(sim):
     """
     """
-    if 'GFM_StellarPhotometrics' not in sim.keys():
+    if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
     
     return sim['GFM_StellarPhotometrics'][:,7]
@@ -651,7 +651,7 @@ def temp(sim):
     For more information, refer to Sec.6 of the TNG FAQ:
     https://www.tng-project.org/data/docs/faq/
     """
-    if 'u' not in sim.keys():
+    if 'u' not in sim:
         print('need gas InternalEnergy to cal: InternalEnergy')
     gamma = 5./3
     UnitEtoUnitM=((units.kpc/units.Gyr).in_units('km s^-1'))**2
@@ -865,7 +865,7 @@ def XH(sim):
     If the 'GFM_Metals' data is available in the simulation, the hydrogen mass fraction is extracted
     from this data. If 'GFM_Metals' is not present, a default value of 0.76 is used.
     """
-    if 'GFM_Metals' in sim.keys():
+    if 'GFM_Metals' in sim:
         Xh=sim['GFM_Metals'].view(np.ndarray).T[0]
         return SimArray(Xh)
     else:
@@ -887,7 +887,7 @@ def mu(sim):
     ------
     - The 'ElectronAbundance' must be present in the simulation data to compute the mean molecular weight.
     """
-    if 'ElectronAbundance' not in sim.keys():
+    if 'ElectronAbundance' not in sim:
         print('need gas ElectronAbundance to cal: ElectronAbundance')
     muu=SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
     return muu.in_units('m_p')
