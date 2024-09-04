@@ -1,15 +1,21 @@
+'''
+Load illustrisTNG data and process by Snapshot.
+'''
+
 from functools import reduce
 
 from pynbody.snapshot import SimSnap
-from pynbody import derived_array,filt
-from pynbody.analysis.profile import Profile
+from pynbody import filt
+import h5py
 
-from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo
+from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo,snapPath
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.TNGsubhalo import Subhalos
 from AnastrisTNG.TNGhalo import Halos, calc_faceon_matrix
+from AnastrisTNG.TNGgroupcat import loadSingle
+
 class Snapshot(SimSnap):
     """
     This class represents a snapshot of simulated cosmological data, containing information about 
@@ -70,6 +76,7 @@ class Snapshot(SimSnap):
         
         self.__GC_loaded={'Halo':set(),
                             'Subhalo':set()}
+        
         self.__pos=SimArray([0.,0.,0.],units.kpc)
         self.__pos.sim=self
         self.__vel=SimArray([0.,0.,0.],units.km/units.s)
@@ -79,7 +86,45 @@ class Snapshot(SimSnap):
         self.__acc=SimArray([0.,0.,0.],units.km/units.s**2)
         self.__acc.sim=self
         self.__init_stable_array()
+        __file_pa=h5py.File(snapPath(BasePath, Snap), 'r')
+        __halo_pa=list(loadSingle(BasePath,Snap,haloID=1).keys())
+        __subhalo_pa=list(loadSingle(BasePath,Snap,subhaloID=1).keys())
+        self.loadable_parameters={
+            'groupcatalogs': {
+                'halo': {x : parameter_all_Description('groupcatalogs','halo',x) for x in __halo_pa},
 
+                'subhalo': {x : parameter_all_Description('groupcatalogs','subhalo',x) for x in __subhalo_pa},
+                },
+            'snapshots': {
+                'Gas':  {x : parameter_all_Description('snapshots','Gas',x) for x in list(__file_pa['PartType0'].keys())},
+                
+                'Star': {x : parameter_all_Description('snapshots','Star',x) for x in list(__file_pa['PartType4'].keys())},
+                
+                'DM': {x : parameter_all_Description('snapshots','DM',x) for x in list(__file_pa['PartType1'].keys())},
+                
+                'BH': {x : parameter_all_Description('snapshots','BH',x) for x in list(__file_pa['PartType5'].keys())},
+                },
+        }
+        __file_pa.close()
+        
+    @staticmethod
+    def parameter_describe(table: str, contents: str, parameters: str) -> str:
+        '''
+        Input:
+            table: str,
+                'snapshots' or 'groupcatalogs'.
+            contents: str,
+                'halo' or 'subhalo' for table = 'groupcatalogs'.
+                'Gas', 'DM', 'Stars', 'BH' for table = 'snapshots'.
+            parameters: str,
+                specified parameter.
+                
+        Output: str
+            description of the parameter.
+        '''
+        
+        return parameter_all_Description(table, contents, parameters)
+        
 
     def physical_units(self, persistent : bool =False):
         """

@@ -20,6 +20,19 @@ def get_Subhalo_property(BasePath,Snap,subhaloID):
         Subhalo[i]=snapshot[i]
     return Subhalo
 
+def get_groupcatalogs_pa(Base, Snap):
+    groupcatalog={}
+    groupcatalog['halo']=_get_Halo_pa(Base,Snap)
+    groupcatalog['subhalo']=_get_Subhalo_pa(Base,Snap)
+    return groupcatalog    
+
+def _get_Subhalo_pa(Base,Snap):
+    
+    return list(loadSingle(BasePath,Snap,subhaloID=1).keys())
+
+def _get_Halo_pa(Base,Snap):
+    
+    return list(loadSingle(BasePath,Snap,HaloID=1).keys())
 
 def get_Halo_property(BasePath,Snap,haloID):
 
