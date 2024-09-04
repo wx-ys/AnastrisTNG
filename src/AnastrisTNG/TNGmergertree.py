@@ -1,14 +1,25 @@
-from AnastrisTNG.illustris_python.sublink import loadTree, maxPastMass
-from AnastrisTNG.TNGunits import groupcat_units
-from pynbody.array import SimArray
-import numpy as np
+'''
+Evolution of galaxies: galaxy_evolution()
+History of galaxy mergers: merger_history()
+'''
+
 from typing import List
+
+from pynbody.array import SimArray
+from pynbody.units import Unit
+import numpy as np
+
+from AnastrisTNG.illustris_python.sublink import loadTree, maxPastMass
+from AnastrisTNG.illustris_python.groupcat import loadHeader
+from AnastrisTNG.TNGunits import groupcat_units
+
+
 
 # Refer to illustris_python.sublink.numMergers, This is a modified version.
 def merger_history(BasePath: str, 
                    snap: int = 99, 
                    subID: int = 10,
-                   Needfields: List[str] = ['SubfindID','SubhaloMassType','SnapNum'],
+                   fields: List[str] = ['SubfindID','SubhaloMassType','SnapNum'],
                    minMassRatio: float = 1e-10, 
                    massPartType: str = 'stars'
                    ) -> dict:
@@ -50,9 +61,9 @@ def merger_history(BasePath: str,
     MergerHistory['MassRatio']=[]
     reqFields = ['SubhaloID', 'NextProgenitorID', 'MainLeafProgenitorID',
                  'FirstProgenitorID', 'SubhaloMassType','SnapNum','SubfindID']
-    allfields=list(set(reqFields+Needfields))
+    allfields=list(set(reqFields+fields))
     tree = loadTree(basePath=BasePath,snapNum=snap,id=subID,fields=allfields,onlyMPB=False)
-    for i in Needfields:
+    for i in fields:
         MergerHistory['First-'+i]=[]
         MergerHistory['Next-'+i]=[]
 
@@ -86,10 +97,16 @@ def merger_history(BasePath: str,
 
                 if ratio >= minMassRatio and ratio <= invMassRatio:
                     numMergers += 1
-                    for key in Needfields:
+                    for key in fields:
                         try:
-                            MergerHistory['First-'+key].append(SimArray(tree[key][fpIndex],units=groupcat_units(key)))
-                            MergerHistory['Next-'+key].append(SimArray(tree[key][npIndex]),units=groupcat_units(key))
+                            A1_snap=tree['SnapNum'][fpIndex]
+                            A2_snap=tree['SnapNum'][npIndex]
+                            A1=SimArray(tree[key][fpIndex],units=groupcat_units(key))
+                            A2=SimArray(tree[key][npIndex],units=groupcat_units(key))
+                            A1=_physical_unit_mer(A1,BasePath,A1_snap)
+                            A2=_physical_unit_mer(A2,BasePath,A2_snap)
+                            MergerHistory['First-'+key].append(A1)
+                            MergerHistory['Next-'+key].append(A2)
                         except: 
                             MergerHistory['First-'+key].append(tree[key][fpIndex])
                             MergerHistory['Next-'+key].append(tree[key][npIndex])
@@ -106,17 +123,97 @@ def merger_history(BasePath: str,
 def galaxy_evolution(basePath: str,
                      snap: int,
                      subID: int,
-                     fields: List[str],
+                     fields: List[str] = ['SnapNum','SubfindID'],
                      ) -> dict:
     """
-    The galaxy evolutionary properties.
+    The evolution of the galaxy.
     """
-    
-    
-    tree = loadTree(basePath,snap,subID,fields,onlyMPB=True)
+    basefields=['SnapNum','SubfindID']
+    allfields=list(set(basefields+fields))
+    tree = loadTree(basePath,snap,subID,allfields,onlyMPB=True)
     for i in tree:
         try:
             tree[i]=SimArray(tree[i],units=groupcat_units(i))
         except:
             continue
+    if tree['count']>0:
+        tree=_physical_unit_evo(tree,basePath)
+    return tree
+
+def _physical_unit_mer(array: SimArray, basepath: str, snap: int) -> SimArray:
+    if isinstance(array,SimArray):
+        if 'h' in str(array.units):
+            units_strlist=str(array.units).split(' ')
+            for i in units_strlist:
+                if 'h' in i:
+                    h_strlist=i.split('**')
+                    if len(h_strlist)==1:
+                        h_pow=1
+                    else:
+                        if '/' in h_strlist[1]:
+                            h_pow=float(h_strlist[1].split('/')[0])/float(h_strlist[1].split('/')[1])
+                        else:
+                            h_pow=float(h_strlist[1])
+                    h_this=loadHeader(basepath,snap)['HubbleParam']
+                    array=array*h_this**(h_pow)
+                    units_strlist.remove(i)
+                    array.units=Unit(" ".join(units_strlist))
+                    break
+        if 'a' in str(array.units) and 'mag' not in str(array.units):
+            units_strlist=str(array.units).split(' ')
+            for i in units_strlist:
+                if 'a' in i:
+                    a_strlist=i.split('**')
+                    if len(a_strlist)==1:
+                        a_pow=1
+                    else:
+                        if '/' in a_strlist[1]:
+                            a_pow=float(a_strlist[1].split('/')[0])/float(a_strlist[1].split('/')[1])
+                        else:
+                            a_pow=float(a_strlist[1])
+                    a_this=loadHeader(basepath,snap)['Time']
+                    array=array*a_this**(a_pow)
+                    units_strlist.remove(i)
+                    array.units=Unit(" ".join(units_strlist))
+                    break
+    return array
+
+def _physical_unit_evo(tree: dict, basepath: str) -> dict:
+    for para in tree:
+        if isinstance(tree[para],SimArray):
+            if 'h' in str(tree[para].units):
+                units_strlist=str(tree[para].units).split(' ')
+                for i in units_strlist:
+                    if 'h' in i:
+                        h_strlist=i.split('**')
+                        if len(h_strlist)==1:
+                            h_pow=1
+                        else:
+                            if '/' in h_strlist[1]:
+                                h_pow=float(h_strlist[1].split('/')[0])/float(h_strlist[1].split('/')[1])
+                            else:
+                                h_pow=float(h_strlist[1])
+                        h_this=loadHeader(basepath,99)['HubbleParam']
+                        tree[para]=tree[para]*h_this**(h_pow)
+                        units_strlist.remove(i)
+                        tree[para].units=Unit(" ".join(units_strlist))
+                        break
+            if 'a' in str(tree[para].units) and 'mag' not in str(tree[para].units):
+                units_strlist=str(tree[para].units).split(' ')
+                for i in units_strlist:
+                    if 'a' in i:
+                        a_strlist=i.split('**')
+                        if len(a_strlist)==1:
+                            a_pow=1
+                        else:
+                            if '/' in a_strlist[1]:
+                                a_pow=float(a_strlist[1].split('/')[0])/float(a_strlist[1].split('/')[1])
+                            else:
+                                a_pow=float(a_strlist[1])
+                        for Snum in range(tree['count']):
+                            a_this=loadHeader(basepath,tree['SnapNum'][Snum])['Time']
+                            tree[para][Snum]=tree[para][Snum]*a_this**(a_pow)
+                        units_strlist.remove(i)
+                        tree[para].units=Unit(" ".join(units_strlist))
+                        break
     return tree

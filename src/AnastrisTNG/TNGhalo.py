@@ -1,12 +1,17 @@
+'''
+Halo data processing
+'''
+from functools import reduce
+
 import numpy as np
-from AnastrisTNG.TNGgroupcat import haloproperties
-from AnastrisTNG.TNGunits import NotneedtransGCPa
+from pynbody import units,filt
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
-from pynbody import units,filt
-from functools import reduce
 from pynbody.analysis.angmom import calc_faceon_matrix
 from pynbody.analysis.halo import virial_radius
+
+from AnastrisTNG.TNGgroupcat import haloproperties
+from AnastrisTNG.TNGunits import NotneedtransGCPa
 class Halo:
     """
     Represents a single halo in the simulation.
@@ -256,6 +261,8 @@ class Halo:
         R : simarray
             The virial radius.
         """
+        if isinstance(cen,None):
+            cen=self.center(mode='ssc')
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
     

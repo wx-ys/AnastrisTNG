@@ -1,5 +1,5 @@
 '''
-Load illustrisTNG data and process by Snapshot.
+Load illustrisTNG data and process it.
 '''
 
 from functools import reduce

@@ -1,14 +1,17 @@
+'''
+Subhalo data processing
+'''
+from functools import reduce
+
 import numpy as np
-from AnastrisTNG.TNGunits import NotneedtransGCPa
-from AnastrisTNG.TNGgroupcat import subhaloproperties
+from pynbody import units,filt
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
-from pynbody import units,filt
-from functools import reduce
 from pynbody.analysis.angmom import calc_faceon_matrix
 from pynbody.analysis.halo import virial_radius
 
-
+from AnastrisTNG.TNGunits import NotneedtransGCPa
+from AnastrisTNG.TNGgroupcat import subhaloproperties
 class Subhalo:
     """
     Represents a single subhalo in the simulation.

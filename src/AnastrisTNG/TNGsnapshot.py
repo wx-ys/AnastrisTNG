@@ -1,11 +1,18 @@
+'''
+Analysis of radial distributions 
+Simsnap operations, overwrite and merge
+Derived array for some particle types
+'''
+import types
+
+import numpy as np
 from pynbody import simdict,units,family,derived_array
 from pynbody.snapshot import new
-import types
-from AnastrisTNG.illustris_python.groupcat import loadHeader
 from pynbody.array import SimArray
+from pynbody.analysis.profile import Profile as _Profile
+
+from AnastrisTNG.illustris_python.groupcat import loadHeader
 from AnastrisTNG.TNGunits import illustrisTNGruns
-import numpy as np
-from pynbody.analysis.profile import Profile
 from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
 
 def cal_potential(sim,targetpos):
@@ -88,10 +95,10 @@ class Profile_1D:
         **kwargs : additional keyword arguments
             Additional parameters to pass to the Profile initialization.
         """
-        self.__Pall=Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pstar=Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pgas=Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pdm=Profile(sim.dm,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pall=_Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pstar=_Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pgas=_Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pdm=_Profile(sim.dm,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
 
         
         self.__properties={}

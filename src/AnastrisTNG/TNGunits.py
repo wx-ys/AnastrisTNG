@@ -5,8 +5,6 @@ units and descriptions of parameters
 from pynbody import units
 import numpy as np
 
-
-
 # Define a list of IllustrisTNG simulation runs available for analysis
 #global illustrisTNGruns
 illustrisTNGruns=['TNG50-1', 'TNG50-2', 'TNG50-3', 'TNG50-4',

@@ -1,12 +1,13 @@
+'''
+Load groupcatalog for Halo or Subhalo
+'''
 
+from pynbody import simdict
+from pynbody.array import SimArray 
 
 from AnastrisTNG.illustris_python.groupcat import loadSingle
-
-from pynbody.array import SimArray 
 from AnastrisTNG.TNGunits import groupcat_units,halo_pa_name,subhalo_pa_name
-from pynbody import simdict
 from AnastrisTNG.TNGsnapshot import get_Snapshot_property
-
 def get_Subhalo_property(BasePath,Snap,subhaloID):
 
     single=subhaloproperties(BasePath,Snap,subhaloID)
@@ -26,11 +27,11 @@ def get_groupcatalogs_pa(Base, Snap):
     groupcatalog['subhalo']=_get_Subhalo_pa(Base,Snap)
     return groupcatalog    
 
-def _get_Subhalo_pa(Base,Snap):
+def _get_Subhalo_pa(BasePath,Snap):
     
     return list(loadSingle(BasePath,Snap,subhaloID=1).keys())
 
-def _get_Halo_pa(Base,Snap):
+def _get_Halo_pa(BasePath,Snap):
     
     return list(loadSingle(BasePath,Snap,HaloID=1).keys())
 

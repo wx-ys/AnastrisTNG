@@ -1,3 +1,8 @@
+'''
+Some useful tools
+find tracers: findtracer_MP(), findtracer()
+...
+'''
 from typing import List
 import multiprocessing as mp
 
