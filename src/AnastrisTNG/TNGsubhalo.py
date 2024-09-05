@@ -244,6 +244,8 @@ class Subhalo:
 
 
     def R_vir(self, cen=None,overden=178):
+        if isinstance(cen,type(None)):
+            cen=self.center(mode='ssc')
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
 

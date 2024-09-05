@@ -261,7 +261,7 @@ class Halo:
         R : simarray
             The virial radius.
         """
-        if isinstance(cen,None):
+        if isinstance(cen,type(None)):
             cen=self.center(mode='ssc')
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
