@@ -71,7 +71,7 @@ def _process_file(file_info):
             findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
         
         if not findresult:
-            print('some found')
+            
             ParentID = np.array(f[gName]['ParentID'])
             TracerID = np.array(f[gName]['TracerID'])
             
@@ -82,7 +82,7 @@ def _process_file(file_info):
             
             result_local['TracerID'] = TracerID[Findepatticle]
             result_local['ParentID'] = ParentID[Findepatticle]
-            print('find',len(result_local['TracerID']))
+            
     
     return result_local
 
@@ -171,7 +171,7 @@ def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid:
             for result_local in pool.imap_unordered(_process_file, file_infos):
                 result['TracerID'] = np.append(result['TracerID'], result_local['TracerID'])
                 result['ParentID'] = np.append(result['ParentID'], result_local['ParentID'])
-                print(len(result_local['ParentID']),len(result['ParentID']))
+               # print(len(result_local['ParentID']),len(result['ParentID']))
                 pbar.update(1)
     
     # Convert to integer type
