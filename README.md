@@ -5,8 +5,11 @@ AnastrisTNG is a python package for processing and analyzing the cosmological si
 
 ```
 git clone https://github.com/wx-ys/AnastrisTNG.git
+```
+Install this in editable mode.
+```
 cd AnastrisTNG
-pip install .
+pip install -e .
 ```
 
 ## Usage
