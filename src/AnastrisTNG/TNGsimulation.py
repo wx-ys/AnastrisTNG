@@ -218,8 +218,8 @@ class Snapshot(SimSnap):
             self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
             f=self.load_particle(ID=haloID,groupType='Halo')
-
-            fmerge=simsnap_merge(self,f)
+           # del self[self['HaloID']==haloID] del the loaded subhalo in this halo or overwrite it ? 
+            fmerge=simsnap_merge(self[self['HaloID']!=haloID],f)
             simsnap_cover(self,fmerge)
 
             ind = np.empty((len(self),), dtype='int8')
@@ -239,7 +239,7 @@ class Snapshot(SimSnap):
         else:
             print('The pos and vel of the snapshot particles') 
             print('are not in the coordinate system in the original box.')
-            print('No new particles can be loaded')
+            print('New particles can not be loaded')
 
     
 
@@ -299,7 +299,7 @@ class Snapshot(SimSnap):
         else:
             print('The pos and vel of the snapshot particles') 
             print('are not in the coordinate system in the original box.')
-            print('No new particles can be loaded')
+            print('New particles can not be loaded')
     
     
     def load_particle(self,ID : int , groupType : str ='Subhalo') -> SimSnap:
