@@ -219,10 +219,16 @@ class Snapshot(SimSnap):
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
             f=self.load_particle(ID=haloID,groupType='Halo')
            # del self[self['HaloID']==haloID] del the loaded subhalo in this halo or overwrite it ? 
-            subhaloIDover=set(self[self['HaloID']==haloID]['SubhaloID'])
+            if 'HaloID' in self:
+                subhaloIDover=set(self[self['HaloID']==haloID]['SubhaloID'])
+            else:
+                subhaloIDover=set([])
             if -1 in subhaloIDover:
                 subhaloIDover.remove(-1)
-            fmerge=simsnap_merge(self[self['HaloID']!=haloID],f)
+            if len(subhaloIDover)>0:
+                fmerge=simsnap_merge(self[self['HaloID']!=haloID],f)
+            else:
+                fmerge=simsnap_merge(self,f)
             simsnap_cover(self,fmerge)
             for i in subhaloIDover:
                 self.match_subhalo(i)
