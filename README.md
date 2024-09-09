@@ -25,7 +25,7 @@ Snapshot.load_halo(400)    #load a halo(id=400)
 
 ```
 
-See examples(examples) for more details,
+See [examples](examples) for more details,
 
 ## Maintainers
 
