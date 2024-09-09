@@ -551,7 +551,9 @@ def age(sim):
     The age is computed as the difference between the current simulation time (`t`) and the stellar formation time (`tform`).
     Particles with a negative age are considered wind particles.
     """
-    return sim.properties['t']-sim['tform']
+    ag=sim.properties['t']-sim['tform']
+    ag.convert_units('Gyr')
+    return ag
 
 #star
 @derived_array
