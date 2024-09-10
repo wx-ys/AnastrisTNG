@@ -243,11 +243,66 @@ class Subhalo:
             self._transform(trans)
 
 
-    def R_vir(self, cen=None,overden=178):
+    def R_vir(self, overden:float =178, cen=None) -> SimArray:
+        """
+        the virial radius of the subhalo.
+
+        Parameters:
+        -----------
+        overden : float, default is 178
+            The overdensity criterion.
+        cen : array-like, default is the cen derived from self.center(mode='ssc')
+            The center position to use.
+        """
         if isinstance(cen,type(None)):
             cen=self.center(mode='ssc')
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
+    
+    def R(self, frac: float = 0.5, callfor: str ='star' ) -> SimArray:
+
+        return self.__call_r('rxy',frac,callfor)
+    
+    def r(self, frac: float = 0.5, callfor: str ='star' ) -> SimArray:
+        
+        return self.__call_r('r',frac,callfor)
+    
+    def __call_r(self,callkeys: str, frac: float = 0.5, callfor: str ='star') -> SimArray:
+        
+        if set(['star','s']) & set([callfor.lower()]):
+            callpa=self.PT.s['mass']
+            callr=self.PT.s[callkeys]
+        elif set(['gas','g']) & set([callfor.lower()]):
+            callpa=self.PT.g['mass']
+            callr=self.PT.g[callkeys]
+        elif set(['dm','darkmatter']) & set([callfor.lower()]):
+            callpa=self.PT.dm['mass']
+            callr=self.PT.dm[callkeys]
+        elif set(['total','all']) & set([callfor.lower()]):
+            callpa=self.PT['mass']
+            callr=self.PT[callkeys]
+        elif set(['baryon']) & set([callfor.lower()]):
+            callpa=SimArray(np.append(self.PT.s['mass'],self.PT.g['mass']),self.PT['mass'].unit)
+            callr=SimArray(np.append(self.PT.s[callkeys],self.PT.g[callkeys]),self.PT[callkeys].unit)
+        else:
+            print('callfor wrong !!!')
+            return
+        pacric=frac*(callpa.sum())
+        args=np.argsort(callr)
+        r_sort=callr[args]
+        pa_sort=callpa[args]
+        pa_cumsum=pa_sort.cumsum()
+        Rcall=(r_sort[pa_cumsum>pacric].min()+r_sort[pa_cumsum<pacric].max())/2
+        
+        return Rcall
+    
+    @property
+    def Re(self):
+        return self.R()
+    
+    @property
+    def re(self):
+        return self.r()
 
     def wrap(self,boxsize=None, convention='center'):
         self.PT.ancestor.wrap(boxsize,convention)
@@ -330,9 +385,7 @@ class Subhalos:
         SimArray
             A SimArray containing the group catalog data for the specified key.
         """
-        k=[]
-        for i in self.__snaps.GC_loaded_Subhalo:
-            k.append(self[str(i)].GC[key])
+        k=[self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Halo]
         ku=SimArray(np.array(k),k[0].units)
         return ku
 
