@@ -265,8 +265,6 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
     wOffset = 0
     origNumToRead = numToRead
     
-
-
     # progress bar
     with tqdm(total=numToRead) as pbar:
         while numToRead:
@@ -284,8 +282,6 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
             if fileOff + numToReadLocal > numTypeLocal:
                 numToReadLocal = numTypeLocal - fileOff
 
-            
-
             if istracerid:
                 findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
             else:
@@ -301,8 +297,6 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
                 result['TracerID']=np.append(result['TracerID'],TracerID[Findepatticle])
                 result['ParentID']=np.append(result['ParentID'],ParentID[Findepatticle])
                 print('Number of tracers that have been matched: ',len(result['TracerID']))
-
-
 
             wOffset   += numToReadLocal
             numToRead -= numToReadLocal

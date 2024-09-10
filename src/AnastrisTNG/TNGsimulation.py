@@ -96,13 +96,13 @@ class Snapshot(SimSnap):
                 'subhalo': {x : parameter_all_Description('groupcatalogs','subhalo',x) for x in __subhalo_pa},
                 },
             'snapshots': {
-                'Gas':  {x : parameter_all_Description('snapshots','Gas',x) for x in list(__file_pa['PartType0'].keys())},
+                'gas':  {x : parameter_all_Description('snapshots','gas',x) for x in list(__file_pa['PartType0'].keys())},
                 
-                'Star': {x : parameter_all_Description('snapshots','Star',x) for x in list(__file_pa['PartType4'].keys())},
+                'star': {x : parameter_all_Description('snapshots','star',x) for x in list(__file_pa['PartType4'].keys())},
                 
-                'DM': {x : parameter_all_Description('snapshots','DM',x) for x in list(__file_pa['PartType1'].keys())},
+                'dm': {x : parameter_all_Description('snapshots','dm',x) for x in list(__file_pa['PartType1'].keys())},
                 
-                'BH': {x : parameter_all_Description('snapshots','BH',x) for x in list(__file_pa['PartType5'].keys())},
+                'bh': {x : parameter_all_Description('snapshots','bh',x) for x in list(__file_pa['PartType5'].keys())},
                 },
         }
         __file_pa.close()

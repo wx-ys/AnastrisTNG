@@ -662,10 +662,10 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
                         'halo': FoF_halos,
                         'subhalo': Subfind_subhalos},
         'snapshots': {
-            'Gas': Gas_parameter,
-            'DM': DM_parameter,
-            'Stars': Star_parameter,
-            'BH': BH_parameter
+            'gas': Gas_parameter,
+            'dm': DM_parameter,
+            'star': Star_parameter,
+            'bh': BH_parameter
         }
     }
-    return ((Description.get(table,{})).get(contents,{})).get(parameters)
+    return ((Description.get(table.lower(),{})).get(contents.lower(),{})).get(parameters)
