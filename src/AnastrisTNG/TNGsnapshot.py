@@ -95,6 +95,8 @@ class Profile_1D:
         **kwargs : additional keyword arguments
             Additional parameters to pass to the Profile initialization.
         """
+        print("Profile_1D -- assumes it's already in the center, and the disk is in the x-y plane")
+        print("If not, please use face_on()")
         self.__Pall=_Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
         self.__Pstar=_Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
         self.__Pgas=_Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
@@ -197,7 +199,7 @@ class Profile_1D:
                 if set(['dm','darkmatter','DM']) & set(ks):
                     return self.__Pdm[ks[0]]
                 if set(['all','ALL']) & set(ks):
-                    return self.__Pstar[ks[0]]
+                    return self.__Pall[ks[0]]
             else:
                 if key in self.__properties:
                     return self.__properties[key]()
