@@ -999,10 +999,9 @@ def t(d):
     import math
     omega_m = d['omegaM0']
     redshift=d['z']
-    omega_fac = math.sqrt( (1-omega_m)/omega_m ) * pow(1+redshift,-3.0/2.0)
     H0_kmsMpc = 100.0 * d['h']*units.km/units.s/units.Mpc
-    AGE = 2.0 * math.asinh(omega_fac) / (H0_kmsMpc * 3 * math.sqrt(1-omega_m))
-    return AGE.in_units('Gyr')*units.Gyr
+    
+    return get_t(omega_m,redshift,H0_kmsMpc)
 
 @simdict.SimDict.getter
 def tLB(d):
@@ -1012,10 +1011,13 @@ def tLB(d):
     import math
     omega_m = d['omegaM0']
     redshift=0.
-    omega_fac = math.sqrt( (1-omega_m)/omega_m ) * pow(1+redshift,-3.0/2.0)
     H0_kmsMpc = 100.0 * d['h']*units.km/units.s/units.Mpc
+
+    tlb=get_t(omega_m,redshift,H0_kmsMpc)-d['t']
+    return tlb
+
+def get_t(omega_m,redshift,H0_kmsMpc):
+    import math
+    omega_fac = math.sqrt( (1-omega_m)/omega_m ) * pow(1+redshift,-3.0/2.0)
     AGE = 2.0 * math.asinh(omega_fac) / (H0_kmsMpc * 3 * math.sqrt(1-omega_m))
-    return AGE.in_units('Gyr')*units.Gyr-d['t']
-
-
-
+    return AGE.in_units('Gyr')*units.Gyr
