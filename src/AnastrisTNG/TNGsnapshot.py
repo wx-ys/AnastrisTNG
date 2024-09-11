@@ -532,7 +532,7 @@ def tform(sim,):
         print('need aform to cal: GFM_StellarFormationTime')
     import numpy as np
     omega_m = sim.properties['omegaM0']
-    a=sim['aform'].view(np.ndarray)
+    a=sim['aform'].view(np.ndarray).copy()
     a[a<0]=0
     omega_fac = np.sqrt( (1-omega_m)/omega_m ) * a**(3/2)
     H0_kmsMpc = 100.0 * sim.ancestor.properties['h']

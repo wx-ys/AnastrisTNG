@@ -14,7 +14,7 @@ from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.TNGsubhalo import Subhalos
 from AnastrisTNG.TNGhalo import Halos, calc_faceon_matrix
-from AnastrisTNG.TNGgroupcat import loadSingle
+from AnastrisTNG.TNGgroupcat import loadSingle,halosproperty,subhalosproperty
 
 class Snapshot(SimSnap):
     """
@@ -56,10 +56,11 @@ class Snapshot(SimSnap):
         self._family_slice[family.get_family('gas')]=slice(0,0)
         self._family_slice[family.get_family('bh')]=slice(0,0)
         self._decorate()
+        self.__set_Snapshot_property(BasePath,Snap)
+        self.properties['filedir']=BasePath
         self.properties['filepath']=BasePath
         self._filename = self.properties['run']
 
-        self.__set_Snapshot_property(BasePath,Snap)
         self.properties['eps'],self.properties['Mdm']=get_eps_Mdm(self)
         self.properties['baseunits']=[units.Unit(x) for x in ('kpc', 'km s^-1', 'Msol')]
         for i in self.properties:
@@ -195,6 +196,44 @@ class Snapshot(SimSnap):
             self._autoconvert = dims
         else:
             self._autoconvert = None
+            
+    def galaxy_evolution(self,subID,fields: List[str] = ['SnapNum', 'SubfindID']):
+        
+        return galaxy_evolution(self.properties['filedir'],self.properties['Snapshot'],subID,fields)
+        
+            
+    def halos_GC(self, fields: List[str]):
+        if isinstance(fields,str):
+            fields=list([fields])
+        if isinstance(fields,list):
+            halosGC=halosproperty(self.properties['filedir'],self.properties['Snapshot'],fields)
+            for i in halosGC:
+                try:
+                    halosGC[i]=SimArray(halosGC[i],groupcat_units(i))
+                    halosGC[i].sim=self
+                except:
+                    continue
+            return halosGC
+        else:
+            print('fields must be a str or list of the parameter name!')
+            return
+                
+    def subhalos_GC(self, fields: List[str]):
+        if isinstance(fields,str):
+            fields=list([fields])
+        if isinstance(fields,list):
+            subhaloGC=subhalosproperty(self.properties['filedir'],self.properties['Snapshot'],fields)
+            for i in subhaloGC:
+                try:
+                    subhaloGC[i]=SimArray(subhaloGC[i],groupcat_units(i))
+                    subhaloGC[i].sim=self
+                except:
+                    continue
+            return subhaloGC
+        else:
+            print('fields must be a str or list of the parameter name!')
+            return
+            
     def load_GC(self):
         """
         Load the group catalog (GC) data for halos and subhalos into the snapshot.
@@ -547,7 +586,7 @@ class Snapshot(SimSnap):
         for i in self.properties:
             if 'sim' in dir(self.properties[i]):
                 self.properties[i].sim=self
-        self.properties['filepath']=BasePath
+        self.properties['filedir']=BasePath
         self.properties['Snapshot']=Snap
 
 
