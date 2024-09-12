@@ -1,6 +1,7 @@
 '''
 Some useful tools
-find tracers: findtracer_MP(), findtracer()
+find tracers: findtracer_MP(), findtracer(), function.
+star both pos: Star_birth(), Class.
 ...
 '''
 from typing import List
@@ -11,6 +12,46 @@ import h5py
 from tqdm import tqdm
 
 from AnastrisTNG.illustris_python.snapshot import *
+from AnastrisTNG.Anatools import orbit
+
+
+class Star_birth():
+    '''the pos when the star form according to the host galaxy position'''
+    
+    def __init__(self,Snap,subID):
+        '''
+        input:
+        Snap,
+        subID,
+        '''
+        
+        if ('BirthPos' not in Snap.load_particle_para['star_fields']
+        or 'GFM_StellarFormationTime' not in Snap.load_particle_para['star_fields']):
+            print('Snap need BirthPos and GFM_StellarFormationTime in load_particle_para')
+            return
+
+        PT=Snap.load_particle(subID)
+        self.s=PT.PT.s
+        
+        evo=Snap.galaxy_evolution(subID,['SubhaloPos','SubhaloVel','SubhaloSpin'],physical_units=False)
+        pos_ckpc=(evo['SubhaloPos']).view(np.ndarray)/0.6774
+        
+        vel_ckpcGyr=(evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T/evo['a']).T
+        time_Gyr=evo['t'].in_units('Gyr')
+        self.orbit=orbit(pos_ckpc,vel_ckpcGyr,time_Gyr)
+        self.s['BirthPos'].convert_units('a kpc')
+        Birthpos=self.s['BirthPos'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
+        Birtha=self.s['aform'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
+        pos,vel=self.orbit.get(self.s['tform'].view(np.ndarray))
+        galapos=pos[(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
+        distance=galapos-Birthpos
+        distance_in_kpc=(distance.T*Birtha).T
+        self.s['pos'].convert_units('kpc')
+        self.s['mass'].convert_units('Msol')
+        self.s['pos'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]=distance_in_kpc
+        
+        
+        
 
 def _process_file(file_info):
     """

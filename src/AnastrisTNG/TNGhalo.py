@@ -49,6 +49,7 @@ class Halo:
         self.GC=SimDict()
         self.GC.update(simarray.properties)
         self.GC['HaloID']=int(simarray.filename.split('_')[-1])
+        
 
     def _load_GC(self):
         """
@@ -241,10 +242,25 @@ class Halo:
             if 'phi' in self.PT:
                 R200=self.R_vir(cen=pos_center,overden=200)
                 phimax=self.PT[filt.Annulus(r1=R200,r2=Rvir,cen=pos_center,)]['phi'].mean()
-            self.PT.ancestor.shift(pos=pos_center,vel=vel_center,phi=phimax)
+            self.shift(pos=pos_center,vel=vel_center,phi=phimax)
             self._transform(trans)
         else:
             self._transform(trans)
+            
+    def shift(self,pos : SimArray =None ,vel : SimArray =None, phi :SimArray =None):
+        '''
+        shift to the specific position
+        then set its pos, vel, phi, acc to 0.
+        '''
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.shift(pos,vel,phi)
+        else:
+            if pos is not None:
+                self.PT['pos']-=pos
+            if vel is not None:
+                self.PT['vel']-=vel
+            if (phi is not None) and ('phi' in self.PT):
+                self.PT['phi']-=phi
     def R_vir(self, overden: float = 178, cen=None) -> SimArray:
         """
         the virial radius of the halo.

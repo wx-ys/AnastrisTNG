@@ -39,10 +39,11 @@ class Subhalo:
         self.GC=SimDict()
         self.GC.update(simarray.properties)
         self.GC['SubhaloID']=int(simarray.filename.split('_')[-1])
-        if self.GC['SubhaloID'] in simarray.ancestor.PT_loaded_Subhalo and len(simarray)==0:
-            simarray.ancestor.match_subhalo(int(simarray.filename.split('_')[-1]))
-            self.PT=simarray.ancestor[simarray.ancestor['SubhaloID']==self.GC['SubhaloID']]
-            self.PT._descriptor='Subhalo'+'_'+simarray.filename.split('_')[-1]
+        if hasattr(simarray.ancestor,'PT_loaded_Subhalo'):
+            if self.GC['SubhaloID'] in simarray.ancestor.PT_loaded_Subhalo and len(simarray)==0:
+                simarray.ancestor.match_subhalo(int(simarray.filename.split('_')[-1]))
+                self.PT=simarray.ancestor[simarray.ancestor['SubhaloID']==self.GC['SubhaloID']]
+                self.PT._descriptor='Subhalo'+'_'+simarray.filename.split('_')[-1]
         
     def _load_GC(self):
         """
@@ -237,11 +238,24 @@ class Subhalo:
             if 'phi' in self.PT:
                 R200=self.R_vir(cen=pos_center,overden=200)
                 phimax=self.PT[filt.Annulus(r1=R200,r2=Rvir,cen=pos_center,)]['phi'].mean()
-            self.PT.ancestor.shift(pos=pos_center,vel=vel_center,phi=phimax)
+            self.shift(pos=pos_center,vel=vel_center,phi=phimax)
             self._transform(trans)
         else:
             self._transform(trans)
-
+    def shift(self,pos : SimArray =None ,vel : SimArray =None, phi :SimArray =None):
+        '''
+        shift to the specific position
+        then set its pos, vel, phi, acc to 0.
+        '''
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.shift(pos,vel,phi)
+        else:
+            if pos is not None:
+                self.PT['pos']-=pos
+            if vel is not None:
+                self.PT['vel']-=vel
+            if (phi is not None) and ('phi' in self.PT):
+                self.PT['phi']-=phi
 
     def R_vir(self, overden:float =178, cen=None) -> SimArray:
         """
@@ -298,26 +312,47 @@ class Subhalo:
     
     @property
     def Re(self):
+        '''
+        half stellar mass radius, 2D
+        '''
         return self.R()
     
     @property
     def re(self):
+        '''
+        half stellar mass radius, 3D
+        '''
         return self.r()
 
     def wrap(self,boxsize=None, convention='center'):
-        self.PT.ancestor.wrap(boxsize,convention)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.wrap(boxsize,convention)
+        else:
+            self.PT.wrap(boxsize,convention)
 
     def rotate_x(self,angle):
-        self.PT.ancestor.rotate_x(angle)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.rotate_x(angle)
+        else:
+            self.PT.rotate_x(angle)
 
     def rotate_y(self,angle):
-        self.PT.ancestor.rotate_y(angle)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.rotate_y(angle)
+        else:
+            self.PT.rotate_y(angle)
 
     def rotate_z(self,angle):
-        self.PT.ancestor.rotate_z(angle)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor.rotate_z(angle)
+        else:
+            self.PT.rotate_z(angle)
 
     def transform(self, matrix):
-        self.PT.ancestor._transform(matrix)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor._transform(matrix)
+        else:
+            self.PT._transform(matrix)
 
 
     def __check_paticles(self):
@@ -326,7 +361,10 @@ class Subhalo:
         else:
             return True
     def _transform(self, matrix):
-        self.PT.ancestor._transform(matrix)
+        if hasattr(self.PT,'base'):
+            self.PT.ancestor._transform(matrix)
+        else:
+            self.PT._transform(matrix)
     def __repr__(self):
         return "<Subhalo \"" + self.PT.ancestor.filename + "\" SubhaloID=" + str(self.GC['SubhaloID']) + ">"
 

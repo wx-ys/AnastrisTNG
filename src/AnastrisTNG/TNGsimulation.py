@@ -12,8 +12,8 @@ from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,load
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
-from AnastrisTNG.TNGsubhalo import Subhalos
-from AnastrisTNG.TNGhalo import Halos, calc_faceon_matrix
+from AnastrisTNG.TNGsubhalo import Subhalos,Subhalo
+from AnastrisTNG.TNGhalo import Halos,Halo, calc_faceon_matrix
 from AnastrisTNG.TNGgroupcat import loadSingle,halosproperty,subhalosproperty
 
 class Snapshot(SimSnap):
@@ -197,9 +197,9 @@ class Snapshot(SimSnap):
         else:
             self._autoconvert = None
             
-    def galaxy_evolution(self,subID,fields: List[str] = ['SnapNum', 'SubfindID']):
+    def galaxy_evolution(self,subID,fields: List[str] = ['SnapNum', 'SubfindID'],physical_units: bool=True):
         
-        return galaxy_evolution(self.properties['filedir'],self.properties['Snapshot'],subID,fields)
+        return galaxy_evolution(self.properties['filedir'],self.properties['Snapshot'],subID,fields,physical_units)
         
             
     def halos_GC(self, fields: List[str]):
@@ -256,7 +256,7 @@ class Snapshot(SimSnap):
         if self.__canloadPT:
             self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
-            f=self.load_particle(ID=haloID,groupType='Halo')
+            f=self.load_particle(ID=haloID,groupType='Halo',decorate=False)
            # del self[self['HaloID']==haloID] del the loaded subhalo in this halo or overwrite it ? 
             if 'HaloID' in self:
                 subhaloIDover=set(self[self['HaloID']==haloID]['SubhaloID'])
@@ -328,7 +328,7 @@ class Snapshot(SimSnap):
         if self.__canloadPT:
             self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
-            f=self.load_particle(ID=subhaloID,groupType='Subhalo')
+            f=self.load_particle(ID=subhaloID,groupType='Subhalo',decorate=False)
 
 
             fmerge=simsnap_merge(self,f)
@@ -351,7 +351,7 @@ class Snapshot(SimSnap):
             print('New particles can not be loaded')
     
     
-    def load_particle(self,ID : int , groupType : str ='Subhalo') -> SimSnap:
+    def load_particle(self,ID : int , groupType : str ='Subhalo',decorate=True) -> SimSnap:
         '''
         ID: int, halo or subhalo id
         groupType: str, 'Halo' or 'Subhalo'
@@ -424,6 +424,11 @@ class Snapshot(SimSnap):
                         f.bh['HaloID']=SimArray(-1*np.ones(len(f.bh)).astype(np.int32))
         f.properties=self.properties
         f._filename=self.filename+'_'+groupType+'_'+str(ID)
+        if decorate:      
+            if groupType=='Halo':
+                return Halo(f)
+            if groupType=='Subhalo':
+                return Subhalo(f)
         return f
     
 

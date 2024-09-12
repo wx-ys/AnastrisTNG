@@ -1,3 +1,8 @@
+'''
+Some useful functions
+orbit: fit the orbit, based on the observed pos,vel,t
+'''
+
 import numpy as np
 import scipy
 

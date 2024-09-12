@@ -24,7 +24,7 @@ def merger_history(BasePath: str,
                    fields: List[str] = ['SubfindID','SubhaloMassType','SnapNum'],
                    minMassRatio: float = 1e-10, 
                    massPartType: str = 'stars',
-                   physical_units: bool = False,
+                   physical_units: bool = True,
                    ) -> dict:
     """
     This function queries the merger history of a subhalo (galaxy).
@@ -66,6 +66,7 @@ def merger_history(BasePath: str,
                  'FirstProgenitorID', 'SubhaloMassType','SnapNum','SubfindID']
     allfields=list(set(reqFields+fields))
     tree = loadTree(basePath=BasePath,snapNum=snap,id=subID,fields=allfields,onlyMPB=False)
+    fields=list(set(fields+['SnapNum']))
     for i in fields:
         MergerHistory['First-'+i]=[]
         MergerHistory['Next-'+i]=[]
@@ -140,7 +141,7 @@ def galaxy_evolution(basePath: str,
                      snap: int,
                      subID: int,
                      fields: List[str] = ['SnapNum','SubfindID'],
-                     physical_units: bool = False,
+                     physical_units: bool = True,
                      ) -> dict:
     """
     The evolution of the galaxy.
