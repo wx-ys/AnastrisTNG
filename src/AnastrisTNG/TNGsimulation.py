@@ -160,7 +160,7 @@ class Snapshot(SimSnap):
         urc=len(dims)-2
         all = list(self._arrays.values())
         for x in self._family_arrays:
-            if x in ['nH','Halpha','em','ne','temp','mu','c_n_sq','p','cs','c_s','acc','phi','age','tform','SubhaloPos']:
+            if x in ['nH','Halpha','em','ne','temp','mu','c_n_sq','p','cs','c_s','acc','phi','age','tform','SubhaloPos','sfr']:
                 continue
             else:
                 all += list(self._family_arrays[x].values())
