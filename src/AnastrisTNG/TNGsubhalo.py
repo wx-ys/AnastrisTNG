@@ -273,6 +273,11 @@ class Subhalo:
         R=virial_radius(self.PT,cen=cen,overden=overden,rho_def='critical')
         return R
     
+    def krot(self, rmax: float = 30, callfor: str ='star')-> np.ndarray:
+        #TODO different callfor
+        filtbyr=self.PT[filt.Sphere(rmax)]
+        return np.array(np.sum((0.5 *filtbyr.s['mass']* (filtbyr.s['vcxy'] ** 2)))/np.sum(filtbyr.s['mass']*filtbyr.s['ke']))   
+    
     def R(self, frac: float = 0.5, callfor: str ='star' ) -> SimArray:
 
         return self.__call_r('rxy',frac,callfor)
