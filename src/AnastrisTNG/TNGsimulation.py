@@ -200,7 +200,15 @@ class Snapshot(SimSnap):
     def galaxy_evolution(self,subID,fields: List[str] = ['SnapNum', 'SubfindID'],physical_units: bool=True):
         
         return galaxy_evolution(self.properties['filedir'],self.properties['Snapshot'],subID,fields,physical_units)
-        
+    
+    def merger_history(self, subID,
+                   fields: List[str] = ['SubfindID','SubhaloMassType','SnapNum'],
+                   minMassRatio: float = 1e-10, 
+                   massPartType: str = 'stars',
+                   physical_units: bool = True,
+                   ) -> dict:    
+        return merger_history(self.properties['filedir'], self.properties['Snapshot'], 
+                   subID,fields,minMassRatio, massPartType,physical_units,) 
             
     def halos_GC(self, fields: List[str]):
         if isinstance(fields,str):
