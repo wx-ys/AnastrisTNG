@@ -258,6 +258,8 @@ class Snapshot(SimSnap):
         """
         Load a specific halo's particles and group catalog (GC) data into the snapshot.
         """
+        if not (isinstance(haloID,int) or np.issubdtype(haloID,np.integer)):
+            raise TypeError("haloID should be int")
         if haloID in self.__PT_loaded['Halo']:
             print(haloID, ' was already loaded into this Snapshot')
             return
@@ -321,7 +323,7 @@ class Snapshot(SimSnap):
         Load particles and properties associated with a specific subhalo into the snapshot.
         """
         
-        if not isinstance(subhaloID,int):
+        if not (isinstance(subhaloID,int) or np.issubdtype(subhaloID,np.integer)):
             raise TypeError("subhaloID should be int")
         if subhaloID in self.__PT_loaded['Subhalo']:
             print(subhaloID, ' was already loaded into this Snapshot')
