@@ -127,6 +127,8 @@ class Subhalo:
             # fall-back to gas
             cen = self.PT.g[filt.Sphere(r_cal,pos)]
         if len(cen) < 5:
+            cen = self.PT[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
             # very weird snapshot, or mis-centering!
             raise ValueError("Insufficient particles around center to get velocity")
 

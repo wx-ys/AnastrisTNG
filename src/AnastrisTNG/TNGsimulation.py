@@ -717,6 +717,8 @@ class Snapshot(SimSnap):
             # fall-back to gas
             cen = self.g[filt.Sphere(r_cal,pos)]
         if len(cen) < 5:
+            cen = self[filt.Sphere(r_cal,pos)]
+        if len(cen) < 5:
             # very weird snapshot, or mis-centering!
             raise ValueError("Insufficient particles around center to get velocity")
 
@@ -767,6 +769,7 @@ class Snapshot(SimSnap):
         return 
     
     def face_on(self,mode :str ='ssc',alignwith : str ='all',shift : bool =True):
+        self.check_boundary()
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
         if alignwith in ['all','total','All','Total']:
