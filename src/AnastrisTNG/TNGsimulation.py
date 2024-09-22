@@ -720,6 +720,7 @@ class Snapshot(SimSnap):
             cen = self[filt.Sphere(r_cal,pos)]
         if len(cen) < 5:
             # very weird snapshot, or mis-centering!
+            print('May mis-centering! Try using other mode to get the center pos')
             raise ValueError("Insufficient particles around center to get velocity")
 
         vcen = (cen['vel'].transpose() * cen['mass']).sum(axis=1)/cen['mass'].sum()
