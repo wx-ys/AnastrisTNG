@@ -6,16 +6,16 @@ Derived array for some particle types
 import types
 
 import numpy as np
-from pynbody import simdict,units,family,derived_array
+from pynbody import simdict,units, family, derived_array
 from pynbody.snapshot import new
 from pynbody.array import SimArray
 from pynbody.analysis.profile import Profile as _Profile
 
 from AnastrisTNG.illustris_python.groupcat import loadHeader
 from AnastrisTNG.TNGunits import illustrisTNGruns
-from AnastrisTNG.pytreegrav import Accel, Potential,PotentialTarget,AccelTarget
+from AnastrisTNG.pytreegrav import Accel, Potential, PotentialTarget, AccelTarget
 
-def cal_potential(sim,targetpos):
+def cal_potential(sim, targetpos):
     """
     Calculates the gravitational potential at target positions.
 
@@ -33,19 +33,19 @@ def cal_potential(sim,targetpos):
     """
     
     try:
-        eps=sim.properties.get('eps',0)
+        eps = sim.properties.get('eps',0)
     except:
-        eps=0
-    if eps==0:
+        eps = 0
+    if eps == 0:
         print('Calculate the gravity without softening length')
-    pot=PotentialTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
-                np.repeat(eps,len(targetpos)).view(np.ndarray))
-    phi=SimArray(pot,units.G*sim['mass'].units/sim['pos'].units)
-    phi.sim=sim
+    pot = PotentialTarget(targetpos, sim['pos'].view(np.ndarray), sim['mass'].view(np.ndarray),
+                            np.repeat(eps, len(targetpos)).view(np.ndarray))
+    phi = SimArray(pot, units.G*sim['mass'].units / sim['pos'].units)
+    phi.sim = sim
     return phi
 
 
-def cal_acceleration(sim,targetpos):
+def cal_acceleration(sim, targetpos):
     """
     Calculates the gravitational acceleration at specified target positions.
 
@@ -62,19 +62,19 @@ def cal_acceleration(sim,targetpos):
         The gravitational acceleration at the target positions.
     """
     try:
-        eps=sim.properties.get('eps',0)
+        eps = sim.properties.get('eps',0)
     except:
-        eps=0
-    if eps==0:
+        eps = 0
+    if eps == 0:
         print('Calculate the gravity without softening length')
-    accelr=AccelTarget(targetpos,sim['pos'].view(np.ndarray),sim['mass'].view(np.ndarray),
-                np.repeat(eps,len(targetpos)).view(np.ndarray))
-    acc=SimArray(accelr,units.G*sim['mass'].units/sim['pos'].units/sim['pos'].units)
-    acc.sim=sim
+    accelr = AccelTarget(targetpos,sim['pos'].view(np.ndarray), sim['mass'].view(np.ndarray),
+                        np.repeat(eps,len(targetpos)).view(np.ndarray))
+    acc = SimArray(accelr, units.G*sim['mass'].units / sim['pos'].units / sim['pos'].units)
+    acc.sim = sim
     return acc
 
 class Profile_1D:
-    def __init__(self,sim,ndim=2,type='lin',nbins=100,rmin=0.1,rmax=100.,**kwargs):
+    def __init__(self, sim, ndim=2, type='lin', nbins=100, rmin=0.1, rmax=100., **kwargs):
         """
         Initializes the profile object for different types of particles in the simulation.
 
@@ -97,73 +97,73 @@ class Profile_1D:
         """
         print("Profile_1D -- assumes it's already at the center, and the disk is in the x-y plane")
         print("If not, please use face_on()")
-        self.__Pall=_Profile(sim,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pstar=_Profile(sim.s,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pgas=_Profile(sim.g,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
-        self.__Pdm=_Profile(sim.dm,ndim=ndim,type=type,nbins=nbins,rmin=rmin,rmax=rmax,**kwargs)
+        self.__Pall = _Profile(sim, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
+        self.__Pstar = _Profile(sim.s, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
+        self.__Pgas = _Profile(sim.g, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
+        self.__Pdm = _Profile(sim.dm, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
 
         
-        self.__properties={}
-        self.__properties['Qgas']=self.Qgas
-        self.__properties['Qstar']=self.Qstar
-        self.__properties['Q2ws']=self.Q2ws
-        self.__properties['Q2thin']=self.Q2thin
-        self.__properties['Q2thick']=self.Q2thick
+        self.__properties = {}
+        self.__properties['Qgas'] = self.Qgas
+        self.__properties['Qstar'] = self.Qstar
+        self.__properties['Q2ws'] = self.Q2ws
+        self.__properties['Q2thin'] = self.Q2thin
+        self.__properties['Q2thick'] = self.Q2thick
 
 
 
-        def v_circ(p,grav_sim=None):
+        def v_circ(p, grav_sim=None):
             """Circular velocity, i.e. rotation curve. Calculated by computing the gravity
             in the midplane - can be expensive"""
             #print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
             grav_sim = grav_sim or p.sim
-            cal_2=np.sqrt(2)/2
-            basearray=np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
-                                (cal_2,cal_2,0),(-cal_2,cal_2,0),
-                                (cal_2,-cal_2,0),(-cal_2,-cal_2,0)])
-            R=p['rbins'].in_units('kpc').copy()
-            POS=np.array([(0,0,0)])
+            cal_2 = np.sqrt(2)/2
+            basearray = np.array([(1,0,0), (0,1,0), (-1,0,0), (0,-1,0),
+                                (cal_2,cal_2,0), (-cal_2,cal_2,0),
+                                (cal_2,-cal_2,0), (-cal_2,-cal_2,0)])
+            R = p['rbins'].in_units('kpc').copy()
+            POS = np.array([(0,0,0)])
             for j in R:
-                binsr=basearray*j
-                POS=np.concatenate((POS,binsr),axis=0)
-            POS=SimArray(POS,R.units)
-            ac=cal_acceleration(grav_sim,POS)
+                binsr = basearray*j
+                POS = np.concatenate((POS,binsr), axis=0)
+            POS = SimArray(POS,R.units)
+            ac = cal_acceleration(grav_sim, POS)
             ac.convert_units('kpc Gyr**-2')
             POS.convert_units('kpc')
-            velall=np.diag(np.dot(ac-ac[0],-POS.T))
+            velall = np.diag(np.dot(ac-ac[0], -POS.T))
             if 'units' in dir(velall):
-                velall.units=units.kpc**2/units.Gyr**2
+                velall.units = units.kpc**2 / units.Gyr**2
             else:
-                velall=SimArray(velall,units.kpc**2/units.Gyr**2)
-            velTrue=np.zeros(len(R))
+                velall = SimArray(velall,units.kpc**2 / units.Gyr**2)
+            velTrue = np.zeros(len(R))
             for i in range(len(R)):
-                velTrue[i]=np.mean(velall[i+1:8*(i+1)+1])
-            velTrue[velTrue<0]=0
-            velTrue=np.sqrt(velTrue)
-            velTrue=SimArray(velTrue,units.kpc/units.Gyr)
+                velTrue[i] = np.mean(velall[i+1 : 8*(i+1)+1])
+            velTrue[velTrue<0] = 0
+            velTrue = np.sqrt(velTrue)
+            velTrue = SimArray(velTrue, units.kpc/units.Gyr)
             velTrue.convert_units('km s**-1')
-            velTrue.sim=grav_sim.ancestor
+            velTrue.sim = grav_sim.ancestor
             return velTrue
-        def pot(p,grav_sim=None):
+        def pot(p, grav_sim=None):
             grav_sim = grav_sim or p.sim
-            cal_2=np.sqrt(2)/2
-            basearray=np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
+            cal_2 = np.sqrt(2)/2
+            basearray = np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
                                 (cal_2,cal_2,0),(-cal_2,cal_2,0),
                                 (cal_2,-cal_2,0),(-cal_2,-cal_2,0)])
-            R=p['rbins'].in_units('kpc').copy()
-            POS=np.array([(0,0,0)])
+            R = p['rbins'].in_units('kpc').copy()
+            POS = np.array([(0,0,0)])
             for j in R:
-                binsr=basearray*j
-                POS=np.concatenate((POS,binsr),axis=0)
-            POS=SimArray(POS,R.units)
-            po=cal_potential(grav_sim,POS)
+                binsr = basearray*j
+                POS = np.concatenate((POS,binsr), axis=0)
+            POS = SimArray(POS,R.units)
+            po = cal_potential(grav_sim,POS)
             po.conver_units('km**2 s**-2')
-            poall=np.zeros(len(R))
+            poall = np.zeros(len(R))
             for i in range(len(R)):
-                poall[i]=np.mean(po[i+1:8*(i+1)+1])
+                poall[i] = np.mean(po[i+1:8*(i+1)+1])
             
-            poall=SimArray(poall,po.units)
-            poall.sim=grav_sim.ancestor
+            poall = SimArray(poall,po.units)
+            poall.sim = grav_sim.ancestor
             return poall
 
         def omega(p):
@@ -171,34 +171,34 @@ class Profile_1D:
             prof = p['v_circ'] / p['rbins']
             prof.convert_units('km s**-1 kpc**-1')
             return prof
-        self.__Pall._profile_registry[v_circ.__name__]=v_circ
-        self.__Pall._profile_registry[omega.__name__]=omega
-        self.__Pall._profile_registry[pot.__name__]=pot
+        self.__Pall._profile_registry[v_circ.__name__] = v_circ
+        self.__Pall._profile_registry[omega.__name__] = omega
+        self.__Pall._profile_registry[pot.__name__] = pot
 
-        self.__Pstar._profile_registry[v_circ.__name__]=v_circ
-        self.__Pstar._profile_registry[omega.__name__]=omega
-        self.__Pstar._profile_registry[pot.__name__]=pot
+        self.__Pstar._profile_registry[v_circ.__name__] = v_circ
+        self.__Pstar._profile_registry[omega.__name__] = omega
+        self.__Pstar._profile_registry[pot.__name__] = pot
 
-        self.__Pgas._profile_registry[v_circ.__name__]=v_circ
-        self.__Pgas._profile_registry[omega.__name__]=omega
-        self.__Pgas._profile_registry[pot.__name__]=pot
+        self.__Pgas._profile_registry[v_circ.__name__] = v_circ
+        self.__Pgas._profile_registry[omega.__name__] = omega
+        self.__Pgas._profile_registry[pot.__name__] = pot
 
-        self.__Pdm._profile_registry[v_circ.__name__]=v_circ
-        self.__Pdm._profile_registry[omega.__name__]=omega
-        self.__Pdm._profile_registry[pot.__name__]=pot
+        self.__Pdm._profile_registry[v_circ.__name__] = v_circ
+        self.__Pdm._profile_registry[omega.__name__] = omega
+        self.__Pdm._profile_registry[pot.__name__] = pot
     
     def __getitem__(self, key):
         
-        if isinstance(key,str):
-            ks=key.split('-')
+        if isinstance(key, str):
+            ks = key.split('-')
             if len(ks)>1:
-                if set(['star','s','Star']) & set(ks):
+                if set(['star', 's', 'Star']) & set(ks):
                     return self.__Pstar[ks[0]]
-                if set(['gas','g','Gas']) & set(ks):
+                if set(['gas', 'g', 'Gas']) & set(ks):
                     return self.__Pgas[ks[0]]
-                if set(['dm','darkmatter','DM']) & set(ks):
+                if set(['dm', 'darkmatter', 'DM']) & set(ks):
                     return self.__Pdm[ks[0]]
-                if set(['all','ALL']) & set(ks):
+                if set(['all', 'ALL']) & set(ks):
                     return self.__Pall[ks[0]]
             else:
                 if key in self.__properties:
@@ -212,48 +212,48 @@ class Profile_1D:
         '''
         Toomre-Q for gas
         '''
-        return (self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        return (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
     def Qstar(self):
         '''
         Toomre-Q parameter
         '''
-        return (self.__Pall['kappa']*self.__Pstar['vr_disp']/(3.36 * self.__Pstar['density'] * units.G)).in_units("")
+        return (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (3.36 * self.__Pstar['density'] * units.G)).in_units("")
     def Q2ws(self):
         '''
         Toomre Q of two component. Wang & Silk (1994)
         '''
-        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
-        return (Qs*Qg)/(Qs+Qg)
+        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        return (Qs*Qg) / (Qs+Qg)
     def Q2thin(self):
         '''
         The effective Q of two component thin disk. Romeo & Wiegert (2011) eq. 6.
         '''
-        w=(2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
-        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        w = (2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp'] / ((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
+        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
 
-        q=[Qs*Qg/(Qs+w*Qg)]
+        q = [Qs*Qg / (Qs+w*Qg)]
         return [Qs[i]*Qg[i]/(Qs[i]+w[i]*Qg[i]) if Qs[i]>Qg[i] else Qs[i]*Qg[i]/(w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
     def Q2thick(self):
         '''
         The effective Q of two component thick disk. Romeo & Wiegert (2011) eq. 9. 
         '''
-        w=(2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
-        Ts=0.8+0.7*(self.__Pstar['vz_disp']/self.__Pstar['vr_disp']).in_units("")
-        Tg=0.8+0.7*(self.__Pgas['vz_disp']/self.__Pgas['vr_disp']).in_units("")
-        Qs=(self.__Pall['kappa']*self.__Pstar['vr_disp']/(np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg=(self.__Pall['kappa']*self.__Pgas['vr_disp']/(np.pi * self.__Pgas['density'] * units.G)).in_units("")
-        Qs=Qs*Ts
-        Qg=Qg*Tg
-        return [Qs[i]*Qg[i]/(Qs[i]+w[i]*Qg[i]) if Qs[i]>Qg[i] else Qs[i]*Qg[i]/(w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
+        w = (2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2 + self.__Pgas['vr_disp']**2)).in_units("")
+        Ts = 0.8+0.7*(self.__Pstar['vz_disp'] / self.__Pstar['vr_disp']).in_units("")
+        Tg = 0.8+0.7*(self.__Pgas['vz_disp'] / self.__Pgas['vr_disp']).in_units("")
+        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
+        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        Qs = Qs*Ts
+        Qg = Qg*Tg
+        return [Qs[i]*Qg[i] / (Qs[i]+w[i]*Qg[i]) if Qs[i] > Qg[i] else Qs[i]*Qg[i] / (w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
 
 
 
 
 ##merge two simsnap and cover
 
-def simsnap_cover(f1,f2):
+def simsnap_cover(f1, f2):
     """
     Overwrites the data in simsnap f1 with data from simsnap f2.
 
@@ -266,43 +266,43 @@ def simsnap_cover(f1,f2):
     """
     for i in f1:
         del f1[i]
-    f1._num_particles=len(f2)
-    if len(f2.dm)>0:
-        f1._family_slice[family.get_family('dm')]= f2._family_slice[family.get_family('dm')]
+    f1._num_particles = len(f2)
+    if len(f2.dm) > 0:
+        f1._family_slice[family.get_family('dm')] = f2._family_slice[family.get_family('dm')]
         for i in f1.dm:
             del f1.dm[i]
-    if len(f2.s)>0:
-        f1._family_slice[family.get_family('star')]= f2._family_slice[family.get_family('star')]
+    if len(f2.s) > 0:
+        f1._family_slice[family.get_family('star')] = f2._family_slice[family.get_family('star')]
         for i in f1.s:
             del f1.s[i]
-    if len(f2.g)>0:
-        f1._family_slice[family.get_family('gas')]= f2._family_slice[family.get_family('gas')]
+    if len(f2.g) > 0:
+        f1._family_slice[family.get_family('gas')] = f2._family_slice[family.get_family('gas')]
         for i in f1.g:
             del f1.g[i]
-    if len(f2.bh)>0:
-        f1._family_slice[family.get_family('bh')]= f2._family_slice[family.get_family('bh')]
+    if len(f2.bh) > 0:
+        f1._family_slice[family.get_family('bh')] = f2._family_slice[family.get_family('bh')]
         for i in f1.bh:
             del f1.bh[i]
             
     f1._create_arrays(["pos", "vel"], 3)
     f1._create_arrays(["mass"], 1)
     f1._decorate()
-    if len(f1.dm)>0:
+    if len(f1.dm) > 0:
         for i in f2.dm:
-            f1.dm[i]=f2.dm[i]
-    if len(f1.s)>0:
+            f1.dm[i] = f2.dm[i]
+    if len(f1.s) > 0:
         for i in f2.s:
-            f1.s[i]=f2.s[i]
-    if len(f1.g)>0:
+            f1.s[i] = f2.s[i]
+    if len(f1.g) > 0:
         for i in f2.g:
-            f1.g[i]=f2.g[i]
-    if len(f1.bh)>0:
+            f1.g[i] = f2.g[i]
+    if len(f1.bh) > 0:
         for i in f2.bh:
-            f1.bh[i]=f2.bh[i]
+            f1.bh[i] = f2.bh[i]
 
 
 
-def simsnap_merge(f1,f2):
+def simsnap_merge(f1, f2):
     """
     Merges twosimsnap f1 and f2 into a new simsnap f3.
 
@@ -317,86 +317,86 @@ def simsnap_merge(f1,f2):
     f3 : simsnap
         The new simsnap containing merged data from f1 and f2.
     """
-    f3=new(star=len(f1.s)+len(f2.s),
-            gas=len(f1.g)+len(f2.g),
-            dm=len(f1.dm)+len(f2.dm),
-            bh=len(f1.bh)+len(f2.bh),
-            order='dm,star,gas,bh')
-    if len(f3.s)>0:
-        if len(f1.s)==0:
+    f3 = new(star = len(f1.s) + len(f2.s),
+             gas = len(f1.g) + len(f2.g),
+             dm = len(f1.dm) + len(f2.dm),
+             bh = len(f1.bh) + len(f2.bh),
+             order = 'dm,star,gas,bh')
+    if len(f3.s) > 0:
+        if len(f1.s) == 0:
             for i in f2.s:
-                f3.s[i]=f2.s[i]
-        elif len(f2.s)==0:
+                f3.s[i] = f2.s[i]
+        elif len(f2.s) == 0:
             for i in f1.s:
-                f3.s[i]=f1.s[i]
+                f3.s[i] = f1.s[i]
         else:
             for i in f2.s:
-                f3.s[i]=SimArray(np.append(f1.s[i],f2.s[i],axis=0),f2.s[i].units)
+                f3.s[i] = SimArray(np.append(f1.s[i], f2.s[i], axis=0), f2.s[i].units)
 
-    if len(f3.dm)>0:
-        if len(f1.dm)==0:
+    if len(f3.dm) > 0:
+        if len(f1.dm) == 0:
             for i in f2.dm:
-                f3.dm[i]=f2.dm[i]
-        elif len(f2.dm)==0:
+                f3.dm[i] = f2.dm[i]
+        elif len(f2.dm) == 0:
             for i in f1.dm:
-                f3.dm[i]=f1.dm[i]
+                f3.dm[i] = f1.dm[i]
         else:
             for i in f2.dm:
-                f3.dm[i]=SimArray(np.append(f1.dm[i],f2.dm[i],axis=0),f2.dm[i].units)
+                f3.dm[i] = SimArray(np.append(f1.dm[i], f2.dm[i], axis=0), f2.dm[i].units)
 
-    if len(f3.g)>0:
-        if len(f1.g)==0:
+    if len(f3.g) > 0:
+        if len(f1.g) == 0:
             for i in f2.g:
-                f3.g[i]=f2.g[i]
-        elif len(f2.g)==0:
+                f3.g[i] = f2.g[i]
+        elif len(f2.g) == 0:
             for i in f1.g:
-                f3.g[i]=f1.g[i]
+                f3.g[i] = f1.g[i]
         else:
             for i in f2.g:
-                f3.g[i]=SimArray(np.append(f1.g[i],f2.g[i],axis=0),f2.g[i].units)
+                f3.g[i] = SimArray(np.append(f1.g[i], f2.g[i], axis=0), f2.g[i].units)
 
-    if len(f3.bh)>0:
-        if len(f1.bh)==0:
+    if len(f3.bh) > 0:
+        if len(f1.bh) == 0:
             for i in f2.bh:
-                f3.bh[i]=f2.bh[i]
-        elif len(f2.bh)==0:
+                f3.bh[i] = f2.bh[i]
+        elif len(f2.bh) == 0:
             for i in f1.bh:
-                f3.bh[i]=f1.bh[i]
+                f3.bh[i] = f1.bh[i]
         else:
             for i in f2.bh:
-                f3.bh[i]=SimArray(np.append(f1.bh[i],f2.bh[i],axis=0),f2.bh[i].units)
+                f3.bh[i] = SimArray(np.append(f1.bh[i], f2.bh[i], axis=0), f2.bh[i].units)
 
     return f3
 
 
 def get_parttype(particle_field):
-    particle_typeload=''
+    particle_typeload = ''
 
     if ('dm' in particle_field) or ('darkmatter' in particle_field):
-        if len(particle_typeload)>0:
-            particle_typeload+=',dm'
+        if len(particle_typeload) > 0:
+            particle_typeload += ',dm'
         else:
-            particle_typeload+='dm'
+            particle_typeload += 'dm'
 
     if ('star' in particle_field) or ('stars' in particle_field) or ('stellar' in particle_field):
-        if len(particle_typeload)>0: 
-            particle_typeload+=',star'
+        if len(particle_typeload) > 0: 
+            particle_typeload += ',star'
         else:
-            particle_typeload+='star'
+            particle_typeload += 'star'
 
 
     if ('gas' in particle_field) or ('g' in particle_field) or ('cells' in particle_field):
-        if len(particle_typeload)>0:
-            particle_typeload+=',gas'
+        if len(particle_typeload) > 0:
+            particle_typeload += ',gas'
         else:
-            particle_typeload+='gas'
+            particle_typeload += 'gas'
 
     if (('bh' in particle_field) or ('bhs' in particle_field) or 
         ('blackhole' in particle_field) or ('blackholes' in particle_field)):
-        if len(particle_typeload)>0:
-            particle_typeload+=',bh'
+        if len(particle_typeload) > 0:
+            particle_typeload += ',bh'
         else:
-            particle_typeload+='bh'
+            particle_typeload += 'bh'
     return particle_typeload
 
 
@@ -419,11 +419,11 @@ def get_Snapshot_property(BasePath : str,Snap : int) ->simdict.SimDict:
     Snapshot : simdict.SimDict
         A SimDict object containing the properties of the specified snapshot.
     """
-    SnapshotHeader=loadHeader(BasePath,Snap)
-    Snapshot=simdict.SimDict()
-    Snapshot['filepath']=BasePath
-    Snapshot['read_Snap_properties']=SnapshotHeader
-    Snapshot['Snapshot']=Snap
+    SnapshotHeader = loadHeader(BasePath,Snap)
+    Snapshot = simdict.SimDict()
+    Snapshot['filepath'] = BasePath
+    Snapshot['read_Snap_properties'] = SnapshotHeader
+    Snapshot['Snapshot'] = Snap
     return Snapshot
 
 
@@ -450,32 +450,32 @@ def get_eps_Mdm(Snapshot):
     after which they are fixed to their z=1 values.' -- Dylan Nelson.
     Data is sourced from https://www.tng-project.org/data/docs/background/.
     """
-    MatchRun={
-        'TNG50-1':[0.39,3.1e5/1e10],
-        'TNG50-2':[0.78,2.5e6/1e10],
-        'TNG50-3':[1.56,2e7/1e10],
-        'TNG50-4':[3.12,1.6e8/1e10],
+    MatchRun = {
+        'TNG50-1': [0.39, 3.1e5/1e10],
+        'TNG50-2': [0.78, 2.5e6/1e10],
+        'TNG50-3': [1.56, 2e7/1e10],
+        'TNG50-4': [3.12, 1.6e8/1e10],
 
-        'TNG100-1':[1,5.1e6/1e10],
-        'TNG100-2':[2,4e7/1e10],
-        'TNG100-3':[4,3.2e8/1e10],
+        'TNG100-1': [1, 5.1e6/1e10],
+        'TNG100-2': [2, 4e7/1e10],
+        'TNG100-3': [4, 3.2e8/1e10],
 
-        'TNG300-1':[2,4e7/1e10],
-        'TNG300-1':[4,3.2e8/1e10],
-        'TNG300-1':[8,2.5e9/1e10],
+        'TNG300-1': [2, 4e7/1e10],
+        'TNG300-1': [4, 3.2e8/1e10],
+        'TNG300-1': [8, 2.5e9/1e10],
     }
 
-    if Snapshot.z>1:
-        return SimArray(MatchRun[Snapshot.run][0],units.a*units.kpc/units.h),SimArray(MatchRun[Snapshot.run][1],1e10*units.Msol/units.h)
+    if Snapshot.z > 1:
+        return SimArray(MatchRun[Snapshot.run][0], units.a*units.kpc/units.h), SimArray(MatchRun[Snapshot.run][1], 1e10*units.Msol/units.h)
     else:
-        return SimArray(MatchRun[Snapshot.run][0]/2,units.kpc/units.h),SimArray(MatchRun[Snapshot.run][1],1e10*units.Msol/units.h)
+        return SimArray(MatchRun[Snapshot.run][0]/2, units.kpc/units.h), SimArray(MatchRun[Snapshot.run][1], 1e10*units.Msol/units.h)
     
 
 #some deride_property
 
 # all
 @derived_array
-def phi(sim) :
+def phi(sim):
     """
     Calculate the gravitational potential for all particles
 
@@ -496,7 +496,7 @@ def phi(sim) :
 
 # all
 @derived_array
-def acc(sim) :
+def acc(sim):
     """
     Calculate the acceleration for all particles.
 
@@ -532,13 +532,13 @@ def tform(sim,):
         print('need aform to cal: GFM_StellarFormationTime')
     import numpy as np
     omega_m = sim.properties['omegaM0']
-    a=sim['aform'].view(np.ndarray).copy()
-    a[a<0]=0
+    a = sim['aform'].view(np.ndarray).copy()
+    a[a<0] = 0
     omega_fac = np.sqrt( (1-omega_m)/omega_m ) * a**(3/2)
     H0_kmsMpc = 100.0 * sim.ancestor.properties['h']
-    t =SimArray(2.0 * np.arcsinh(omega_fac) / (H0_kmsMpc * 3 * np.sqrt(1-omega_m)),units.Mpc/units.km*units.s)
+    t = SimArray(2.0 * np.arcsinh(omega_fac) / (H0_kmsMpc * 3 * np.sqrt(1-omega_m)),units.Mpc/units.km*units.s)
     t.convert_units('Gyr')
-    t[t==0]=14.
+    t[t == 0] = 14.
     return t
 
 
@@ -553,7 +553,7 @@ def age(sim):
     The age is computed as the difference between the current simulation time (`t`) and the stellar formation time (`tform`).
     Particles with a negative age are considered wind particles.
     """
-    ag=sim.properties['t']-sim['tform']
+    ag = sim.properties['t']-sim['tform']
     ag.convert_units('Gyr')
     return ag
 
@@ -665,8 +665,8 @@ def temp(sim):
     if 'u' not in sim:
         print('need gas InternalEnergy to cal: InternalEnergy')
     gamma = 5./3
-    UnitEtoUnitM=((units.kpc/units.Gyr).in_units('km s^-1'))**2
-    T=(gamma-1)/units.k*sim['mu']*sim['u']*UnitEtoUnitM
+    UnitEtoUnitM = ((units.kpc/units.Gyr).in_units('km s^-1'))**2
+    T = (gamma-1)/units.k*sim['mu']*sim['u']*UnitEtoUnitM
 
     T.convert_units('K')
     return T
@@ -689,8 +689,8 @@ def ne(sim):
     - ElectronAbundance is the fraction of electrons per hydrogen atom.
     - n_H is the hydrogen number density in cm^-3.
     """
-    n=sim['ElectronAbundance']*sim['nH'].in_units('cm^-3')
-    n.units=units.cm**-3
+    n = sim['ElectronAbundance']*sim['nH'].in_units('cm^-3')
+    n.units = units.cm**-3
     return n
 
 #gas
@@ -862,8 +862,8 @@ def nH(sim):
       where X_H is the hydrogen mass fraction, rho is the gas density, and m_p is the proton mass.
 
     """
-    nh=sim['XH']*(sim['rho'].in_units('g cm^-3')/units.m_p).in_units('cm^-3')
-    nh.units=units.cm**-3
+    nh = sim['XH']*(sim['rho'].in_units('g cm^-3') / units.m_p).in_units('cm^-3')
+    nh.units = units.cm**-3
     return nh
 
 
@@ -877,7 +877,7 @@ def XH(sim):
     from this data. If 'GFM_Metals' is not present, a default value of 0.76 is used.
     """
     if 'GFM_Metals' in sim:
-        Xh=sim['GFM_Metals'].view(np.ndarray).T[0]
+        Xh = sim['GFM_Metals'].view(np.ndarray).T[0]
         return SimArray(Xh)
     else:
         print('No GFM_Metals, use hydrogen mass fraction XH=0.76')
@@ -900,7 +900,7 @@ def mu(sim):
     """
     if 'ElectronAbundance' not in sim:
         print('need gas ElectronAbundance to cal: ElectronAbundance')
-    muu=SimArray(4/(1+3*sim['XH']+4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
+    muu = SimArray(4/(1+3*sim['XH'] + 4*sim['XH']*sim['ElectronAbundance']).astype(np.float64),units.m_p)
     return muu.in_units('m_p')
 
 
@@ -947,21 +947,21 @@ def read_Snap_properties(f,SnapshotHeader):
     - 'Subhalos_total': Total number of subhalos in the snapshot.
     """
 
-    f['a']=SnapshotHeader['Time']
-    f['h']=SnapshotHeader['HubbleParam']
-    f['omegaM0']=SnapshotHeader['Omega0']
-    f['omegaL0']=SnapshotHeader['OmegaLambda']
-    f['omegaB0']=0.0486
-    f['sigma8']=0.8159
-    f['ns']=0.9667
-    f['boxsize']=SimArray(1.,SnapshotHeader['BoxSize']*units.kpc*units.a/units.h)
-    f['Halos_total']=SnapshotHeader['Ngroups_Total']
-    f['Subhalos_total']=SnapshotHeader['Nsubgroups_Total']
+    f['a'] = SnapshotHeader['Time']
+    f['h'] = SnapshotHeader['HubbleParam']
+    f['omegaM0'] = SnapshotHeader['Omega0']
+    f['omegaL0'] = SnapshotHeader['OmegaLambda']
+    f['omegaB0'] = 0.0486
+    f['sigma8'] = 0.8159
+    f['ns'] = 0.9667
+    f['boxsize'] = SimArray(1., SnapshotHeader['BoxSize']*units.kpc*units.a/units.h)
+    f['Halos_total'] = SnapshotHeader['Ngroups_Total']
+    f['Subhalos_total'] = SnapshotHeader['Nsubgroups_Total']
 
 
 
 @simdict.SimDict.setter
-def filepath(f,BasePath):
+def filepath(f, BasePath):
     """
     Set the file path for the simulation data.
 
@@ -980,10 +980,10 @@ def filepath(f,BasePath):
     - Identifies the simulation run by checking which known run names are present in the BasePath.
     - Updates the 'run' key in the simulation dictionary with the identified run name.
     """
-    f['filedir']=BasePath
+    f['filedir'] = BasePath
     for i in illustrisTNGruns:
         if i in BasePath:
-            f['run']=i
+            f['run'] = i
             break
 
 
@@ -998,10 +998,10 @@ def t(d):
     """
     import math
     omega_m = d['omegaM0']
-    redshift=d['z']
+    redshift = d['z']
     H0_kmsMpc = 100.0 * d['h']*units.km/units.s/units.Mpc
     
-    return get_t(omega_m,redshift,H0_kmsMpc)
+    return get_t(omega_m, redshift, H0_kmsMpc)
 
 @simdict.SimDict.getter
 def tLB(d):
@@ -1010,13 +1010,13 @@ def tLB(d):
     """
     import math
     omega_m = d['omegaM0']
-    redshift=0.
+    redshift = 0.
     H0_kmsMpc = 100.0 * d['h']*units.km/units.s/units.Mpc
 
-    tlb=get_t(omega_m,redshift,H0_kmsMpc)-d['t']
+    tlb = get_t(omega_m,redshift,H0_kmsMpc) - d['t']
     return tlb
 
-def get_t(omega_m,redshift,H0_kmsMpc):
+def get_t(omega_m, redshift, H0_kmsMpc):
     import math
     omega_fac = math.sqrt( (1-omega_m)/omega_m ) * pow(1+redshift,-3.0/2.0)
     AGE = 2.0 * math.asinh(omega_fac) / (H0_kmsMpc * 3 * math.sqrt(1-omega_m))

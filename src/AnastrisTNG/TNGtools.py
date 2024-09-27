@@ -18,7 +18,7 @@ from AnastrisTNG.Anatools import orbit
 class Star_birth():
     '''the pos when the star form according to the host galaxy position'''
     
-    def __init__(self,Snap,subID):
+    def __init__(self, Snap, subID):
         '''
         input:
         Snap,
@@ -30,25 +30,25 @@ class Star_birth():
             print('Snap need BirthPos and GFM_StellarFormationTime in load_particle_para')
             return
 
-        PT=Snap.load_particle(subID)
-        self.s=PT.PT.s
+        PT = Snap.load_particle(subID)
+        self.s = PT.PT.s
         
-        evo=Snap.galaxy_evolution(subID,['SubhaloPos','SubhaloVel','SubhaloSpin'],physical_units=False)
-        pos_ckpc=(evo['SubhaloPos']).view(np.ndarray)/0.6774
+        evo = Snap.galaxy_evolution(subID,['SubhaloPos','SubhaloVel','SubhaloSpin'],physical_units = False)
+        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray)/0.6774
         
-        vel_ckpcGyr=(evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T/evo['a']).T
-        time_Gyr=evo['t'].in_units('Gyr')
-        self.orbit=orbit(pos_ckpc,vel_ckpcGyr,time_Gyr)
+        vel_ckpcGyr = (evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']).T
+        time_Gyr = evo['t'].in_units('Gyr')
+        self.orbit = orbit(pos_ckpc,vel_ckpcGyr, time_Gyr)
         self.s['BirthPos'].convert_units('a kpc')
-        Birthpos=self.s['BirthPos'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
-        Birtha=self.s['aform'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
-        pos,vel=self.orbit.get(self.s['tform'].view(np.ndarray))
-        galapos=pos[(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]
-        distance=galapos-Birthpos
-        distance_in_kpc=(distance.T*Birtha).T
+        Birthpos = self.s['BirthPos'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
+        Birtha = self.s['aform'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
+        pos,vel = self.orbit.get(self.s['tform'].view(np.ndarray))
+        galapos = pos[(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
+        distance = galapos - Birthpos
+        distance_in_kpc = (distance.T*Birtha).T
         self.s['pos'].convert_units('kpc')
         self.s['mass'].convert_units('Msol')
-        self.s['pos'][(self.s['tform']>self.orbit.tmin)&(self.s['tform']<self.orbit.tmax)]=distance_in_kpc
+        self.s['pos'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)] = distance_in_kpc
         
         
         
@@ -103,13 +103,13 @@ def _process_file(file_info):
     with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
        # print('open file')
         if gName not in f:
-            print('skip',fileNum)
+            print('skip', fileNum)
             return result_local
       #  print(len(f['PartType3']['TracerID'][:]))
         if istracerid:
-            findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+            findresult = findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
         else:
-            findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
+            findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
         
         if not findresult:
             
@@ -202,7 +202,7 @@ def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid:
             except FileNotFoundError:
                 break
     # mutiprocesses
-    with mp.Pool(processes=NP) as pool:
+    with mp.Pool(processes = NP) as pool:
         # date
         file_infos = [(basePath, snapNum, fileNum, findIDset, istracerid) for fileNum in file_numbers]
         
@@ -269,17 +269,17 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
     """
 
     result = {}
-    result['ParentID']=np.array([])
-    result['TracerID']=np.array([])
+    result['ParentID'] = np.array([])
+    result['TracerID'] = np.array([])
     
     # PartType3, tracer
     ptNum = 3
     gName = "PartType" + str(ptNum)
     
     # Apart from ParentID and TracerID, there is also FluidQuantities in TNG100
-    fields=['ParentID','TracerID']
+    fields = ['ParentID','TracerID']
 
-    findIDset=set(findID)
+    findIDset = set(findID)
 
     # load header from first chunk
     with h5py.File(snapPath(basePath, snapNum), 'r') as f:
@@ -307,7 +307,7 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
     origNumToRead = numToRead
     
     # progress bar
-    with tqdm(total=numToRead) as pbar:
+    with tqdm(total = numToRead) as pbar:
         while numToRead:
             f = h5py.File(snapPath(basePath, snapNum, fileNum), 'r')
 
@@ -324,20 +324,20 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
                 numToReadLocal = numTypeLocal - fileOff
 
             if istracerid:
-                findresult=findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+                findresult = findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
             else:
-                findresult=findIDset.isdisjoint(f['PartType3']['ParentID'][:])
+                findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
 
-            if findresult==False:
-                ParentID=np.array(f['PartType3']['ParentID'])
-                TracerID=np.array(f['PartType3']['TracerID'])
+            if findresult == False:
+                ParentID = np.array(f['PartType3']['ParentID'])
+                TracerID = np.array(f['PartType3']['TracerID'])
                 if istracerid:
-                    Findepatticle=np.isin(TracerID,findID)                     # time complexity O( len(array1)*len(array2) ) 
+                    Findepatticle = np.isin(TracerID,findID)                     # time complexity O( len(array1)*len(array2) ) 
                 else:
-                    Findepatticle=np.isin(ParentID,findID)
-                result['TracerID']=np.append(result['TracerID'],TracerID[Findepatticle])
-                result['ParentID']=np.append(result['ParentID'],ParentID[Findepatticle])
-                print('Number of tracers that have been matched: ',len(result['TracerID']))
+                    Findepatticle = np.isin(ParentID,findID)
+                result['TracerID'] = np.append(result['TracerID'], TracerID[Findepatticle])
+                result['ParentID'] = np.append(result['ParentID'], ParentID[Findepatticle])
+                print('Number of tracers that have been matched: ', len(result['TracerID']))
 
             wOffset   += numToReadLocal
             numToRead -= numToReadLocal
@@ -348,10 +348,10 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
             pbar.update(numToReadLocal)
             
             # if matching TracerIDs, the number of tracers found must be the same as the len(findID).
-            if istracerid and len(result['TracerID'])==len(findID):   
+            if istracerid and len(result['TracerID']) == len(findID):   
                 break
-    result['TracerID']=result['TracerID'].astype(int)
-    result['ParentID']=result['ParentID'].astype(int)
+    result['TracerID'] = result['TracerID'].astype(int)
+    result['ParentID'] = result['ParentID'].astype(int)
     return result
 
 '''

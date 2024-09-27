@@ -7,23 +7,23 @@ import numpy as np
 
 # Define a list of IllustrisTNG simulation runs available for analysis
 #global illustrisTNGruns
-illustrisTNGruns=['TNG50-1', 'TNG50-2', 'TNG50-3', 'TNG50-4',
-                  'TNG100-1', 'TNG100-2', 'TNG100-3',
-                  'TNG300-1', 'TNG300-2', 'TNG300-3',]
+illustrisTNGruns = ['TNG50-1', 'TNG50-2', 'TNG50-3', 'TNG50-4',
+                    'TNG100-1', 'TNG100-2', 'TNG100-3',
+                    'TNG300-1', 'TNG300-2', 'TNG300-3',]
 
 # Define common units used in TNG simulations
-UnitLength=units.kpc/units.h
-UnitMass=1e10*units.Msol/units.h
-UnitVel=units.km/units.s
-UnitMassdTime=UnitMass/(0.978*units.Gyr/units.h)
-UnitComvingLength=units.a*UnitLength
-UnitPressure=(UnitMass/UnitLength)*(units.km/units.s/units.kpc)**2
-UnitNo=units.no_unit
+UnitLength = units.kpc / units.h
+UnitMass = 1e10*units.Msol / units.h
+UnitVel = units.km / units.s
+UnitMassdTime = UnitMass / (0.978*units.Gyr / units.h)
+UnitComvingLength = units.a*UnitLength
+UnitPressure = (UnitMass / UnitLength)*(units.km / units.s / units.kpc)**2
+UnitNo = units.no_unit
 
 # Define parameters that will not be converted in physical_units()
 #global NotneedtransGCPa
-NotneedtransGCPa=['SubhaloSFR','SubhaloSFRinHalfRad','SubhaloSFRinMaxRad','SubhaloSFRinRad','SubhaloStellarPhotometrics',
-                  'GroupSFR']
+NotneedtransGCPa = ['SubhaloSFR', 'SubhaloSFRinHalfRad', 'SubhaloSFRinMaxRad', 'SubhaloSFRinRad', 'SubhaloStellarPhotometrics',
+                    'GroupSFR']
 
 
 def halo_pa_name(field :str ,) -> str:
@@ -49,7 +49,7 @@ def halo_pa_name(field :str ,) -> str:
     in `Matchfield`, the corresponding custom name is returned. Otherwise, the function 
     returns the original `field` name.
     """
-    Matchfield={
+    Matchfield = {
 
     }
     if field in Matchfield:
@@ -80,7 +80,7 @@ def subhalo_pa_name(field :str,) -> str:
     in `Matchfield`, the corresponding custom name is returned. Otherwise, the function 
     returns the original `field` name.
     """
-    Matchfield={
+    Matchfield = {
 
     }
     if field in Matchfield:
@@ -112,7 +112,7 @@ def snapshot_pa_name(field : str,) -> str:
     their custom names. If the input `field` is found in `Matchfield`, the corresponding 
     custom name is returned. Otherwise, the function returns the original `field` name.
     """
-    Matchfield={
+    Matchfield = {
         'Coordinates': 'pos',
         'Density': 'rho',
         'ParticleIDs': 'iord',
@@ -160,53 +160,53 @@ def snapshot_units(field : str,) -> units.Unit:
     >>> SnapshotsUnits('Velocity')
     KeyError: 'Velocity'
     """
-    Matchfieldunits={
+    Matchfieldunits = {
         'CenterOfMass': UnitComvingLength,
         'Coordinates': UnitComvingLength,
-        'Density':(UnitMass)/(UnitComvingLength)**3,
-        'ElectronAbundance':UnitNo,
-        'EnergyDissipation':(1/units.a*1e10*units.Msol)/(units.a*units.kpc)*(UnitVel)**3,
-        'GFM_AGNRadiation':units.erg/units.s/units.cm**2*(4*np.pi),
-        'GFM_CoolingRate':units.erg*units.cm**3/units.s,
+        'Density': (UnitMass) / (UnitComvingLength)**3,
+        'ElectronAbundance': UnitNo,
+        'EnergyDissipation': (1 / units.a*1e10*units.Msol) / (units.a*units.kpc)*(UnitVel)**3,
+        'GFM_AGNRadiation': units.erg / units.s / units.cm**2*(4*np.pi),
+        'GFM_CoolingRate': units.erg*units.cm**3 / units.s,
         'GFM_Metallicity': UnitNo,
-        'GFM_Metals':UnitNo,
-        'GFM_MetalsTagged':UnitNo,
-        'GFM_WindDMVelDisp':UnitVel,
-        'GFM_WindHostHaloMass':UnitMass,
-        'InternalEnergy':(UnitVel)**2,
-        'InternalEnergyOld':(UnitVel)**2,
-        'Machnumber':UnitNo,
-        'MagneticField':(units.h/units.a**2)*UnitPressure**(1,2),
-        'MagneticFieldDivergence':(units.h**3/units.a*2)*(1e10*units.Msol)**(1,2)*(UnitVel)*(units.a*units.kpc)**(-5,2),
-        'Masses':(UnitMass),
-        'NeutralHydrogenAbundance':UnitNo,
+        'GFM_Metals': UnitNo,
+        'GFM_MetalsTagged': UnitNo,
+        'GFM_WindDMVelDisp': UnitVel,
+        'GFM_WindHostHaloMass': UnitMass,
+        'InternalEnergy': (UnitVel)**2,
+        'InternalEnergyOld': (UnitVel)**2,
+        'Machnumber': UnitNo,
+        'MagneticField': (units.h/units.a**2)*UnitPressure**(1,2),
+        'MagneticFieldDivergence': (units.h**3 / units.a*2)*(1e10*units.Msol)**(1, 2)*(UnitVel)*(units.a*units.kpc)**(-5, 2),
+        'Masses': (UnitMass),
+        'NeutralHydrogenAbundance': UnitNo,
         'ParticleIDs': UnitNo,
-        'Potential': (UnitVel)**2/units.a,
-        'StarFormationRate':  units.Msol/units.yr,
-        'SubfindDMDensity': (UnitMass)/(UnitComvingLength)**3,
-        'SubfindDensity': (UnitMass)/(UnitComvingLength)**3,
+        'Potential': (UnitVel)**2 / units.a,
+        'StarFormationRate':  units.Msol / units.yr,
+        'SubfindDMDensity': (UnitMass) / (UnitComvingLength)**3,
+        'SubfindDensity': (UnitMass) / (UnitComvingLength)**3,
         'SubfindHsml': UnitComvingLength,
         'SubfindVelDisp': UnitVel,
-        'Velocities': units.km*units.a**(1,2)/units.s,
+        'Velocities': units.km*units.a**(1, 2) / units.s,
         'BirthPos': UnitComvingLength,
-        'BirthVel': units.km*units.a**(1,2)/units.s,
+        'BirthVel': units.km*units.a**(1, 2) / units.s,
         'GFM_InitialMass': UnitMass,
         'GFM_StellarFormationTime': UnitNo,
         'GFM_StellarPhotometrics': UnitNo,
         'StellarHsml': UnitComvingLength,
-        'BH_BPressure': (units.h/units.a)**4*1e10*units.Msol*(UnitVel)**2/(units.a*units.kpc)**3,
-        'BH_CumEgyInjection_QM': UnitMass*(UnitComvingLength)**2/(0.978*units.Gyr/units.h)**2,
-        'BH_CumEgyInjection_RM': UnitMass*(UnitComvingLength)**2/(0.978*units.Gyr/units.h)**2,
+        'BH_BPressure': (units.h / units.a)**4*1e10*units.Msol*(UnitVel)**2 / (units.a*units.kpc)**3,
+        'BH_CumEgyInjection_QM': UnitMass*(UnitComvingLength)**2 / (0.978*units.Gyr/units.h)**2,
+        'BH_CumEgyInjection_RM': UnitMass*(UnitComvingLength)**2 / (0.978*units.Gyr/units.h)**2,
         'BH_CumMassGrowth_QM': UnitMass,
         'BH_CumMassGrowth_RM': UnitMass,
-        'BH_Density': UnitMass/(UnitComvingLength)**3,
+        'BH_Density': UnitMass / (UnitComvingLength)**3,
         'BH_HostHaloMass': UnitMass,
         'BH_Hsml': UnitComvingLength,
         'BH_Mass':  UnitMass,
         'BH_Mdot': UnitMassdTime,
         'BH_MdotBondi': UnitMassdTime,
         'BH_MdotEddington':UnitMassdTime,
-        'BH_Pressure':UnitMass/(UnitComvingLength)/(0.978*units.Gyr/units.h)**2,
+        'BH_Pressure': UnitMass / (UnitComvingLength) / (0.978*units.Gyr/units.h)**2,
         'BH_Progs': UnitNo,
         'BH_U': (UnitVel)**2,
     }
@@ -237,7 +237,7 @@ def groupcat_units(field : str,) -> units.Unit:
     specifications as detailed in their documentation:
     https://www.tng-project.org/data/docs/specifications/#sec2
     """
-    Matchfieldunits={
+    Matchfieldunits = {
         ### halo properties
         'GroupBHMass': UnitMass,
         'GroupBHMdot': UnitMassdTime,
@@ -668,4 +668,4 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
             'bh': BH_parameter
         }
     }
-    return ((Description.get(table.lower(),{})).get(contents.lower(),{})).get(parameters)
+    return ((Description.get(table.lower(), {})).get(contents.lower(), {})).get(parameters)
