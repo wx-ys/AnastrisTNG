@@ -10,7 +10,7 @@ from pynbody.array import SimArray
 from pynbody.analysis.angmom import calc_faceon_matrix
 from pynbody.analysis.halo import virial_radius
 
-from AnastrisTNG.Anatools import ang_mom, ang_mom_abs
+from AnastrisTNG.Anatools import ang_mom
 from AnastrisTNG.TNGunits import NotneedtransGCPa
 from AnastrisTNG.TNGgroupcat import subhaloproperties
 class Subhalo:
@@ -202,26 +202,6 @@ class Subhalo:
             angmom=angmom1+angmo2
         return angmom
     
-    def ang_mom_vec_abs(self, alignwith: str = 'all', rmax=None):
-        alignwith = alignwith.lower()
-        if rmax==None:
-            callan=self.PT
-        else:
-            callan=self.PT[filt.Sphere(rmax)]
-        
-        if alignwith in ['all','total']:
-            angmom = ang_mom_abs(callan)
-        elif alignwith in ['dm','darkmatter']:
-            angmom = ang_mom_abs(callan.dm)
-        elif alignwith in ['star','s']:
-            angmom =ang_mom_abs(callan.s)
-        elif alignwith in ['gas','g']:
-            angmom =ang_mom_abs(callan.g)
-        elif alignwith in ['baryon','baryonic']:
-            angmom1 = ang_mom_abs(callan.s)
-            angmo2 = ang_mom_abs(callan.g)
-            angmom=angmom1+angmo2
-        return angmom
     
     def face_on(self, **kwargs):
         """
@@ -258,14 +238,14 @@ class Subhalo:
         if alignmode == 'jc':
             angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
         else:
-            angmom=self.ang_mom_vec_abs(alignwith=alignwith, rmax=rmax)
+            angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
 
         trans = calc_faceon_matrix(angmom)
         if shift:
             phimax=None
             if 'phi' in self.PT:
                 R200 = self.R_vir(cen=pos_center, overden=200)
-                phimax = self.PT[filt.Annulus(r1=R200, r2=Rvir, cen=pos_center,)]['phi'].mean()
+                phimax = self.PT[filt.Annulus(r1=R200, r2=self.R_vir(), cen=pos_center,)]['phi'].mean()
             self.shift(phi=phimax)
             self._transform(trans)
         else:
@@ -303,7 +283,7 @@ class Subhalo:
         R = virial_radius(self.PT, cen=cen, overden=overden, rho_def='critical')
         return R
     
-    def krot(self, rmax: float = 30, callfor: str ='star')-> np.ndarray:
+    def krot(self, rmax: float = 30., callfor: str ='star')-> np.ndarray:
         #TODO different callfor
         filtbyr = self.PT[filt.Sphere(rmax)]
         return np.array(np.sum((0.5*filtbyr.s['mass']*(filtbyr.s['vcxy'] ** 2))) / np.sum(filtbyr.s['mass']*filtbyr.s['ke']))   

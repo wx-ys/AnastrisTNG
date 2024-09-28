@@ -110,15 +110,6 @@ def ang_mom(snap):
               np.cross(snap['pos'], snap['vel'])).sum(axis=0).view(np.ndarray)
     return angmom
 
-def ang_mom_abs(snap):
-    angmom = (snap['mass'].reshape((len(snap), 1)) *
-              np.abs(np.cross(snap['pos'], snap['vel']))).sum(axis=0).view(np.ndarray)
-    return angmom
-
-def ang_mom_eng(snap):
-    angmom = (snap['mass'].reshape((len(snap), 1)) *
-              np.cross(snap['pos']**2, snap['vel']**2)).sum(axis=0).view(np.ndarray)
-    return angmom
 
 def angle_between_vectors(v1, v2):
     dot_product = np.dot(v1, v2)

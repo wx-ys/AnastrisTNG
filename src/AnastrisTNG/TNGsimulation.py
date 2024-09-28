@@ -12,7 +12,7 @@ from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,load
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
-from AnastrisTNG.Anatools import ang_mom, ang_mom_abs, ang_mom_eng
+from AnastrisTNG.Anatools import ang_mom
 from AnastrisTNG.TNGsubhalo import Subhalos,Subhalo
 from AnastrisTNG.TNGhalo import Halos,Halo, calc_faceon_matrix
 from AnastrisTNG.TNGgroupcat import loadSingle,halosproperty,subhalosproperty
@@ -791,46 +791,6 @@ class Snapshot(SimSnap):
             angmom=angmom1+angmo2
         return angmom
     
-    def ang_mom_vec_abs(self, alignwith: str = 'all', rmax=None):
-        alignwith = alignwith.lower()
-        if rmax==None:
-            callan=self
-        else:
-            callan=self[filt.Sphere(rmax)]
-        
-        if alignwith in ['all','total']:
-            angmom = ang_mom_abs(callan)
-        elif alignwith in ['dm','darkmatter']:
-            angmom = ang_mom_abs(callan.dm)
-        elif alignwith in ['star','s']:
-            angmom =ang_mom_abs(callan.s)
-        elif alignwith in ['gas','g']:
-            angmom =ang_mom_abs(callan.g)
-        elif alignwith in ['baryon','baryonic']:
-            angmom1 = ang_mom_abs(callan.s)
-            angmo2 = ang_mom_abs(callan.g)
-            angmom=angmom1+angmo2
-        return angmom
-    def ang_mom_vec_eng(self, alignwith: str = 'all', rmax=None):
-        alignwith = alignwith.lower()
-        if rmax==None:
-            callan=self
-        else:
-            callan=self[filt.Sphere(rmax)]
-        
-        if alignwith in ['all','total']:
-            angmom = ang_mom_eng(callan)
-        elif alignwith in ['dm','darkmatter']:
-            angmom = ang_mom_eng(callan.dm)
-        elif alignwith in ['star','s']:
-            angmom =ang_mom_eng(callan.s)
-        elif alignwith in ['gas','g']:
-            angmom =ang_mom_eng(callan.g)
-        elif alignwith in ['baryon','baryonic']:
-            angmom1 = ang_mom_eng(callan.s)
-            angmo2 = ang_mom_eng(callan.g)
-            angmom=angmom1+angmo2
-        return angmom
     
     def face_on(self, **kwargs):
         mode = kwargs.get('mode', 'ssc')
@@ -847,9 +807,9 @@ class Snapshot(SimSnap):
         if alignmode == 'jc':
             angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
         elif alignmode == 'jabs':
-            angmom=self.ang_mom_vec_abs(alignwith=alignwith, rmax=rmax)
+            angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
         else:
-            angmom=self.ang_mom_vec_eng(alignwith=alignwith, rmax=rmax)
+            angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
 
 
         trans =calc_faceon_matrix(angmom)
