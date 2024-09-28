@@ -12,6 +12,7 @@ from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,load
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
+from AnastrisTNG.Anatools import ang_mom, ang_mom_abs, ang_mom_eng
 from AnastrisTNG.TNGsubhalo import Subhalos,Subhalo
 from AnastrisTNG.TNGhalo import Halos,Halo, calc_faceon_matrix
 from AnastrisTNG.TNGgroupcat import loadSingle,halosproperty,subhalosproperty
@@ -769,34 +770,93 @@ class Snapshot(SimSnap):
 
         return 
     
-    def face_on(self,mode :str ='ssc',alignwith : str ='all',shift : bool =True):
+    def ang_mom_vec(self, alignwith: str = 'all', rmax=None):
+        alignwith = alignwith.lower()
+        if rmax==None:
+            callan=self
+        else:
+            callan=self[filt.Sphere(rmax)]
+        
+        if alignwith in ['all','total']:
+            angmom = ang_mom(callan)
+        elif alignwith in ['dm','darkmatter']:
+            angmom = ang_mom(callan.dm)
+        elif alignwith in ['star','s']:
+            angmom =ang_mom(callan.s)
+        elif alignwith in ['gas','g']:
+            angmom =ang_mom(callan.g)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = ang_mom(callan.s)
+            angmo2 = ang_mom(callan.g)
+            angmom=angmom1+angmo2
+        return angmom
+    
+    def ang_mom_vec_abs(self, alignwith: str = 'all', rmax=None):
+        alignwith = alignwith.lower()
+        if rmax==None:
+            callan=self
+        else:
+            callan=self[filt.Sphere(rmax)]
+        
+        if alignwith in ['all','total']:
+            angmom = ang_mom_abs(callan)
+        elif alignwith in ['dm','darkmatter']:
+            angmom = ang_mom_abs(callan.dm)
+        elif alignwith in ['star','s']:
+            angmom =ang_mom_abs(callan.s)
+        elif alignwith in ['gas','g']:
+            angmom =ang_mom_abs(callan.g)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = ang_mom_abs(callan.s)
+            angmo2 = ang_mom_abs(callan.g)
+            angmom=angmom1+angmo2
+        return angmom
+    def ang_mom_vec_eng(self, alignwith: str = 'all', rmax=None):
+        alignwith = alignwith.lower()
+        if rmax==None:
+            callan=self
+        else:
+            callan=self[filt.Sphere(rmax)]
+        
+        if alignwith in ['all','total']:
+            angmom = ang_mom_eng(callan)
+        elif alignwith in ['dm','darkmatter']:
+            angmom = ang_mom_eng(callan.dm)
+        elif alignwith in ['star','s']:
+            angmom =ang_mom_eng(callan.s)
+        elif alignwith in ['gas','g']:
+            angmom =ang_mom_eng(callan.g)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = ang_mom_eng(callan.s)
+            angmo2 = ang_mom_eng(callan.g)
+            angmom=angmom1+angmo2
+        return angmom
+    
+    def face_on(self, **kwargs):
+        mode = kwargs.get('mode', 'ssc')
+        alignwith = kwargs.get('alignwith', 'all')
+        rmax = kwargs.get('rmax', None)
+        shift = kwargs.get('shift', True)
+        alignmode = kwargs.get('alignmode', 'jc')
+        
         self.check_boundary()
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
-        if alignwith in ['all','total','All','Total']:
-            angmom = (self['mass'].reshape((len(self), 1)) *
-              np.cross(self['pos']-pos_center, self['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-        elif alignwith in ['DM','dm','darkmatter','Darkmatter']:
-            angmom = (self.dm['mass'].reshape((len(self.dm), 1)) *
-              np.cross(self.dm['pos']-pos_center, self.dm['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-        elif alignwith in ['star','s','Star']:
-            angmom = (self.s['mass'].reshape((len(self.s), 1)) *
-              np.cross(self.s['pos']-pos_center, self.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-        elif alignwith in ['gas','g','Gas']:
-            angmom = (self.g['mass'].reshape((len(self.g), 1)) *
-              np.cross(self.g['pos']-pos_center, self.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-        elif alignwith in ['baryon','baryonic']:
-            angmom1 = (self.g['mass'].reshape((len(self.g), 1)) *
-              np.cross(self.g['pos']-pos_center, self.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            angmo2 = (self.s['mass'].reshape((len(self.s), 1)) *
-              np.cross(self.s['pos']-pos_center, self.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            angmom=angmom1+angmo2
+        
+        self.ancestor.shift(pos=pos_center,vel=vel_center)
+        if alignmode == 'jc':
+            angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
+        elif alignmode == 'jabs':
+            angmom=self.ang_mom_vec_abs(alignwith=alignwith, rmax=rmax)
+        else:
+            angmom=self.ang_mom_vec_eng(alignwith=alignwith, rmax=rmax)
+
 
         trans =calc_faceon_matrix(angmom)
         if shift:
-            self.ancestor.shift(pos=pos_center,vel=vel_center)
             self._transform(trans)
         else:
+            self.ancestor.shift(pos=-pos_center,vel=-vel_center)
             self._transform(trans)
 
     

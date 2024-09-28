@@ -104,3 +104,26 @@ class orbit():
         VEL[t>self.tmax]=np.array([0,0,0])
         return POS,VEL
     
+# from pynbody.analysis.angmom.ang_mom_vec    
+def ang_mom(snap):
+    angmom = (snap['mass'].reshape((len(snap), 1)) *
+              np.cross(snap['pos'], snap['vel'])).sum(axis=0).view(np.ndarray)
+    return angmom
+
+def ang_mom_abs(snap):
+    angmom = (snap['mass'].reshape((len(snap), 1)) *
+              np.abs(np.cross(snap['pos'], snap['vel']))).sum(axis=0).view(np.ndarray)
+    return angmom
+
+def ang_mom_eng(snap):
+    angmom = (snap['mass'].reshape((len(snap), 1)) *
+              np.cross(snap['pos']**2, snap['vel']**2)).sum(axis=0).view(np.ndarray)
+    return angmom
+
+def angle_between_vectors(v1, v2):
+    dot_product = np.dot(v1, v2)
+    v1_norm = np.linalg.norm(v1)
+    v2_norm = np.linalg.norm(v2)
+    cos_theta = dot_product / (v1_norm * v2_norm)
+    theta=np.arccos(cos_theta)
+    return np.degrees(theta)

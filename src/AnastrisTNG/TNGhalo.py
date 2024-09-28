@@ -12,6 +12,7 @@ from pynbody.analysis.halo import virial_radius
 
 from AnastrisTNG.TNGgroupcat import haloproperties
 from AnastrisTNG.TNGunits import NotneedtransGCPa
+from AnastrisTNG.Anatools import ang_mom, ang_mom_abs
 class Halo:
     """
     Represents a single halo in the simulation.
@@ -183,7 +184,49 @@ class Halo:
 
         return 
     
-    def face_on(self,mode='ssc',alignwith='all',shift=True):
+    def ang_mom_vec(self, alignwith: str = 'all', rmax=None):
+        alignwith = alignwith.lower()
+        if rmax==None:
+            callan=self.PT
+        else:
+            callan=self.PT[filt.Sphere(rmax)]
+        
+        if alignwith in ['all','total']:
+            angmom = ang_mom(callan)
+        elif alignwith in ['dm','darkmatter']:
+            angmom = ang_mom(callan.dm)
+        elif alignwith in ['star','s']:
+            angmom =ang_mom(callan.s)
+        elif alignwith in ['gas','g']:
+            angmom =ang_mom(callan.g)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = ang_mom(callan.s)
+            angmo2 = ang_mom(callan.g)
+            angmom=angmom1+angmo2
+        return angmom
+    
+    def ang_mom_vec_abs(self, alignwith: str = 'all', rmax=None):
+        alignwith = alignwith.lower()
+        if rmax==None:
+            callan=self.PT
+        else:
+            callan=self.PT[filt.Sphere(rmax)]
+        
+        if alignwith in ['all','total']:
+            angmom = ang_mom_abs(callan)
+        elif alignwith in ['dm','darkmatter']:
+            angmom = ang_mom_abs(callan.dm)
+        elif alignwith in ['star','s']:
+            angmom =ang_mom_abs(callan.s)
+        elif alignwith in ['gas','g']:
+            angmom =ang_mom_abs(callan.g)
+        elif alignwith in ['baryon','baryonic']:
+            angmom1 = ang_mom_abs(callan.s)
+            angmo2 = ang_mom_abs(callan.g)
+            angmom=angmom1+angmo2
+        return angmom
+    
+    def face_on(self, **kwargs):
         """
         Transforms the halo's coordinate system to a 'face-on' view.
 
@@ -197,57 +240,42 @@ class Halo:
         alignwith : str, optional
             Specifies which component to use for alignment. Options include:
             - 'all' or 'total': Uses the combined angular momentum of all components.
-            - 'DM', 'dm', 'darkmatter', 'Darkmatter': Uses the angular momentum of dark matter.
-            - 'star', 's', 'Star': Uses the angular momentum of stars.
-            - 'gas', 'g', 'Gas': Uses the angular momentum of gas.
+            - 'dm', 'darkmatter': Uses the angular momentum of dark matter.
+            - 'star', 's': Uses the angular momentum of stars.
+            - 'gas', 'g': Uses the angular momentum of gas.
             - 'baryon', 'baryonic': Uses the combined angular momentum of stars and gas.
         shift : bool, optional
             If True, shifts the halo to its center of mass and adjusts the coordinate system. Default is True.
-
-        Notes:
-        ------
-        - `self.center(mode=mode)` computes the center of the halo based on the specified mode.
-        - `self.vel_center(mode=mode)` computes the velocity center of the halo.
-        - `self.R_vir(cen=pos_center)` provides the virial radius based on the computed center.
-        - `calc_faceon_matrix(angmom)` calculates the transformation matrix to align the halo to face-on view.
-        - The method assumes the presence of `immediate_mode` for `innerpart` to enable efficient data access.
         """
+        mode = kwargs.get('mode', 'ssc')
+        alignwith = kwargs.get('alignwith', 'all')
+        rmax = kwargs.get('rmax', None)
+        shift = kwargs.get('shift', True)
+        alignmode = kwargs.get('alignmode', 'jc')
         
-        
+        self.check_boundary()
         pos_center=self.center(mode=mode)
         vel_center=self.vel_center(mode=mode)
-        Rvir=self.R_vir(cen=pos_center)
-        innerpart=self.PT[filt.Sphere(radius=0.1*Rvir,cen=pos_center)]
-        with innerpart.immediate_mode:
-            if alignwith in ['all','total','All','Total']:
-                angmom = (innerpart['mass'].reshape((len(innerpart), 1)) *
-                np.cross(innerpart['pos']-pos_center, innerpart['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            elif alignwith in ['DM','dm','darkmatter','Darkmatter']:
-                angmom = (innerpart.dm['mass'].reshape((len(innerpart.dm), 1)) *
-                np.cross(innerpart.dm['pos']-pos_center, innerpart.dm['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            elif alignwith in ['star','s','Star']:
-                angmom = (innerpart.s['mass'].reshape((len(innerpart.s), 1)) *
-                np.cross(innerpart.s['pos']-pos_center, innerpart.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            elif alignwith in ['gas','g','Gas']:
-                angmom = (innerpart.g['mass'].reshape((len(innerpart.g), 1)) *
-                np.cross(innerpart.g['pos']-pos_center, innerpart.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-            elif alignwith in ['baryon','baryonic']:
-                angmom1 = (innerpart.g['mass'].reshape((len(innerpart.g), 1)) *
-                np.cross(innerpart.g['pos']-pos_center, innerpart.g['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-                angmo2 = (innerpart.s['mass'].reshape((len(innerpart.s), 1)) *
-                np.cross(innerpart.s['pos']-pos_center, innerpart.s['vel']-vel_center)).sum(axis=0).view(np.ndarray)
-                angmom=angmom1+angmo2
+        
+        self.shift(pos=pos_center,vel=vel_center)
+        if alignmode == 'jc':
+            angmom=self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
+        else:
+            angmom=self.ang_mom_vec_abs(alignwith=alignwith, rmax=rmax)
 
-        trans =calc_faceon_matrix(angmom)
+        trans = calc_faceon_matrix(angmom)
         if shift:
             phimax=None
             if 'phi' in self.PT:
-                R200=self.R_vir(cen=pos_center,overden=200)
-                phimax=self.PT[filt.Annulus(r1=R200,r2=Rvir,cen=pos_center,)]['phi'].mean()
-            self.shift(pos=pos_center,vel=vel_center,phi=phimax)
+                R200 = self.R_vir(cen=pos_center, overden=200)
+                phimax = self.PT[filt.Annulus(r1=R200, r2=Rvir, cen=pos_center,)]['phi'].mean()
+            self.shift(phi=phimax)
             self._transform(trans)
         else:
+            self.shift(pos=-pos_center,vel=-vel_center)
             self._transform(trans)
+            
+    
             
     def shift(self,pos : SimArray =None ,vel : SimArray =None, phi :SimArray =None):
         '''
