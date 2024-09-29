@@ -4,8 +4,9 @@ orbit: fit the orbit, based on the observed pos,vel,t
 '''
 
 import numpy as np
-import scipy
-
+from scipy.linalg import solve
+from scipy.optimize import minimize
+from pynbody.analysis.angmom import calc_faceon_matrix
 
 
 class orbit():
@@ -54,7 +55,7 @@ class orbit():
             v2=self.vx[i+1]
             A=np.array([[1,t1,t1**2,t1**3],[1,t2,t2**2,t2**3],[0,1,2*t1,3*t1**2],[0,1,2*t2,3*t2**2]])
             B=np.array([x1,x2,v1,v2])
-            coef=scipy.linalg.solve(A,B)
+            coef=solve(A,B)
             self.coefx.append(coef)      
                   
             x1=self.y[i]
@@ -63,7 +64,7 @@ class orbit():
             v2=self.vy[i+1]
             A=np.array([[1,t1,t1**2,t1**3],[1,t2,t2**2,t2**3],[0,1,2*t1,3*t1**2],[0,1,2*t2,3*t2**2]])
             B=np.array([x1,x2,v1,v2])
-            coef=scipy.linalg.solve(A,B)
+            coef=solve(A,B)
             self.coefy.append(coef)      
             
             x1=self.z[i]
@@ -72,7 +73,7 @@ class orbit():
             v2=self.vz[i+1]
             A=np.array([[1,t1,t1**2,t1**3],[1,t2,t2**2,t2**3],[0,1,2*t1,3*t1**2],[0,1,2*t2,3*t2**2]])
             B=np.array([x1,x2,v1,v2])
-            coef=scipy.linalg.solve(A,B)
+            coef=solve(A,B)
             self.coefz.append(coef)   
         self.coefx=np.array(self.coefx)
         self.coefy=np.array(self.coefy)
@@ -118,3 +119,40 @@ def angle_between_vectors(v1, v2):
     cos_theta = dot_product / (v1_norm * v2_norm)
     theta=np.arccos(cos_theta)
     return np.degrees(theta)
+
+def get_krot(pos,vel,mass,Rota):
+    pos_new = np.dot(Rota, pos.T)
+    vel_new = np.dot(Rota, vel.T)
+    rxy=np.sqrt((pos_new[0]**2 +pos_new[1] ** 2))
+    vcxy=(pos_new[0] * vel_new[1] - pos_new[1]  * vel_new[0]) / rxy
+    Krot = np.array(np.sum((0.5*mass*(vcxy** 2))) / np.sum(mass*0.5 * (vel_new ** 2).sum(axis=0)))  
+    return Krot
+
+def _kroterr(initpa, *args):
+    
+    x, y, z = initpa
+    if (x+y+z) == 0:
+        z = 1
+    Rc = np.array([x, y, z])
+    Rota = calc_faceon_matrix(Rc)
+    pos,vel,mass = args
+    Krot = get_krot(pos,vel,mass,Rota)
+    return 100-Krot*100 
+
+def fit_krotmax(pos,vel,mass, method='BFGS'):
+    
+    res = minimize(_kroterr,
+                (0,0.,1.),
+                (pos,vel,mass),
+                method=method,
+               )
+    if res.success:
+        result = {
+            'krotmax': (1-res.fun/100),
+            'krotvec': (res.x/np.linalg.norm(res.x)),
+            'krotmat': calc_faceon_matrix(res.x),
+        }
+        return result
+    else:
+        print('Failed to fit maximum krot')
+        return None

@@ -8,14 +8,15 @@ from pynbody.snapshot import SimSnap
 from pynbody import filt
 import h5py
 
-from AnastrisTNG.illustris_python.snapshot import getSnapOffsets,loadSubset,loadSubhalo,snapPath
+from AnastrisTNG.illustris_python.snapshot import getSnapOffsets, loadSubset, loadSubhalo, snapPath
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.Anatools import ang_mom
-from AnastrisTNG.TNGsubhalo import Subhalos,Subhalo
-from AnastrisTNG.TNGhalo import Halos,Halo, calc_faceon_matrix
-from AnastrisTNG.TNGgroupcat import loadSingle,halosproperty,subhalosproperty
+from AnastrisTNG.TNGsubhalo import Subhalos, Subhalo
+from AnastrisTNG.TNGhalo import Halos, Halo, calc_faceon_matrix
+from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty
+from AnastrisTNG.pytreegrav import Accel, Potential, PotentialTarget, AccelTarget
 
 class Snapshot(SimSnap):
     """
@@ -64,6 +65,7 @@ class Snapshot(SimSnap):
 
         self.properties['eps'],self.properties['Mdm']=get_eps_Mdm(self)
         self.properties['baseunits']=[units.Unit(x) for x in ('kpc', 'km s^-1', 'Msol')]
+        self.properties['staunit']=['nH','Halpha','em','ne','temp','mu','c_n_sq','p','cs','c_s','acc','phi','age','tform','SubhaloPos','sfr']
         for i in self.properties:
             if isinstance(self.properties[i],SimArray):
                 self.properties[i].sim=self
@@ -72,7 +74,7 @@ class Snapshot(SimSnap):
         self.__set_load_particle()
         self.subhalos=Subhalos(self)
         self.halos=Halos(self)
-        self.__canloadPT=True
+        self._canloadPT=True
         self.__PT_loaded={'Halo':set(),
                         'Subhalo':set()}
         
@@ -87,7 +89,6 @@ class Snapshot(SimSnap):
         self.__phi.sim=self
         self.__acc=SimArray([0.,0.,0.],units.km/units.s**2)
         self.__acc.sim=self
-        self.__init_stable_array()
         __file_pa=h5py.File(snapPath(BasePath, Snap), 'r')
         __halo_pa=list(loadSingle(BasePath,Snap,haloID=1).keys())
         __subhalo_pa=list(loadSingle(BasePath,Snap,subhaloID=1).keys())
@@ -142,32 +143,20 @@ class Snapshot(SimSnap):
             If True, the conversion to physical units will be persistent, meaning that 
             future calculations and accesses will use these units by default. If False, 
             the conversion is temporary (default is False).
-
-        Procedure:
-        ----------
-        1. The base units of the simulation are retrieved and used for conversion.
-        2. The method iterates over all the arrays and properties associated with the simulation 
-        and attempts to convert their units to the corresponding physical units.
-        3. ('nH', 'Halpha', 'em', 'ne', 'temp', 'mu', 'c_n_sq', 'p', 'cs', 'c_s', 'acc', 'phi'), 
-        are skipped from conversion.
-        4. The method attempts to project the units onto the physical dimensions, and if successful, 
-        it converts the units.
-        5. The method also converts units for subhalo and halo data.
-        6. If persistent is set to True, the conversion units are stored, making the conversion 
-        permanent for subsequent operations; otherwise, the conversion is temporary.
         """
 
         dims = self.properties['baseunits']+[units.a,units.h]
         urc=len(dims)-2
         all = list(self._arrays.values())
         for x in self._family_arrays:
-            if x in ['nH','Halpha','em','ne','temp','mu','c_n_sq','p','cs','c_s','acc','phi','age','tform','SubhaloPos','sfr']:
+            if x in self.properties.get('staunit',[]):
                 continue
             else:
                 all += list(self._family_arrays[x].values())
 
         for ar in all:
-            self._autoconvert_array_unit(ar.ancestor, dims,urc)
+            if ar.units is not units.no_unit:
+                self._autoconvert_array_unit(ar.ancestor, dims,urc)
 
         for k in list(self.properties):
             v = self.properties[k]
@@ -197,6 +186,7 @@ class Snapshot(SimSnap):
             self._autoconvert = dims
         else:
             self._autoconvert = None
+        self._canloadPT = False
             
     def galaxy_evolution(self,subID,fields: List[str] = ['SnapNum', 'SubfindID'],physical_units: bool=True):
         
@@ -264,7 +254,7 @@ class Snapshot(SimSnap):
         if haloID in self.__PT_loaded['Halo']:
             print(haloID, ' was already loaded into this Snapshot')
             return
-        if self.__canloadPT:
+        if self._canloadPT:
             self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
             f=self.load_particle(ID=haloID,groupType='Halo',decorate=False)
@@ -336,7 +326,7 @@ class Snapshot(SimSnap):
                 print('So here match this subhalo particle and modify their SubhaloID')
                 self.match_subhalo(subhaloID)
             return
-        if self.__canloadPT:
+        if self._canloadPT:
             self.load_particle_para['particle_field']=self.load_particle_para['particle_field'].lower()
             self.load_particle_para['particle_field']=get_parttype(self.load_particle_para['particle_field'])
             f=self.load_particle(ID=subhaloID,groupType='Subhalo',decorate=False)
@@ -480,14 +470,10 @@ class Snapshot(SimSnap):
         return phi
     
 
-
-    
-
-
     def wrap(self,boxsize=None, convention='center'):
         
         super().wrap(boxsize, convention)
-        self.__canloadPT=False
+        self._canloadPT=False
 
         print('It involves a change of coordinates')
         print('Can\'t load new particles in this Snapshot')
@@ -512,84 +498,21 @@ class Snapshot(SimSnap):
 
         return
 
-    def _PT_potential(self):
-        '''
-        Calculate the potential for each particle
-        https://github.com/mikegrudic/pytreegrav
-        '''
-        
-        self.check_boundary()
-        print('Calculating gravity and it will take tens of seconds')
-        if len(self['mass'])>1000:
-            print('Calculate by using Octree')
-        else:
-            print('Calculate by using brute force')
-        try:
-            eps=self.properties.get('eps',0)
-        except:
-            eps=0
-        if eps==0:
-            print('Calculate the gravity without softening length')
-       # self.physical_units()
-        pot=Potential(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(eps,len(self['mass'])).view(np.ndarray))
-        phi=SimArray(pot,units.G*self['mass'].units/self['pos'].units)
-        self['phi']=phi
-        self['phi'].convert_units('km**2 s**-2')
-        self.__canloadPT=False
-        return self['phi']
-    
-    def _PT_acceleration(self):
-        '''
-        Calculate the acceleration for each particle
-        https://github.com/mikegrudic/pytreegrav
-        '''
-        
-        self.check_boundary()
-        if len(self['mass'])>1000:
-            print('Calculate by using Octree')
-        else:
-            print('Calculate by using brute force')
-        try:
-            eps=self.properties.get('eps',0)
-        except:
-            eps=0
-        if eps==0:
-            print('Calculate the gravity without softening length')
-      #  self.physical_units()
-        accelr=Accel(self['pos'].view(np.ndarray),self['mass'].view(np.ndarray),
-                  np.repeat(eps,len(self['mass'])).view(np.ndarray))
-        acc=SimArray(accelr,units.G*self['mass'].units/self['pos'].units/self['pos'].units)
-        self['acc']=acc
-        self.__canloadPT=False
-        self['acc'].convert_units('km s^-1 Gyr^-1')
-        return self['acc']
-
-    def __init_stable_array(self):
-        """
-        Make 'acc' and 'phi' 'stable'.
-        """
-        
-        if '_derived_quantity_registry' in dir(self):
-            self._derived_quantity_registry[phi.__name__]=phi
-            self._derived_quantity_registry[phi.__name__] = phi
-            phi.__stable__=True
-
-            self._derived_quantity_registry[acc.__name__]=acc
-            self._derived_quantity_registry[acc.__name__] = acc
-            acc.__stable__=True
-            return
-        if '_derived_array_registry' in dir(self):
-            self._derived_array_registry[phi.__name__]=phi
-            self._derived_array_registry[phi.__name__] = phi
-            phi.__stable__=True
-
-            self._derived_array_registry[acc.__name__]=acc
-            self._derived_array_registry[acc.__name__] = acc
-            acc.__stable__=True
-
     def __repr__(self):
         return "<Snapshot \"" + self.filename + "\" len=" + str(len(self)) + ">"
+    
+    
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except:
+            pass
+        
+        if name in self.properties:
+            return self.properties[name]
+        
+        raise AttributeError("%r object has no attribute %r" % (
+            type(self).__name__, name))
 
     def __set_Snapshot_property(self,BasePath : str ,Snap : int):
         """
@@ -605,9 +528,6 @@ class Snapshot(SimSnap):
         self.properties['filedir']=BasePath
         self.properties['Snapshot']=Snap
 
-
-
-
     def __set_load_particle(self):
         pa={}
         pa['particle_field']='dm,star,gas,bh'
@@ -617,28 +537,6 @@ class Snapshot(SimSnap):
         pa['dm_fields']=[]
         pa['bh_fields']=[]
         self.load_particle_para=pa
-
-    def _autoconvert_array_unit(self, ar, dims=None, ucut=3):
-        """Given an array ar, convert its units such that the new units span
-        dims[:ucut]. dims[ucut:] are evaluated in the conversion (so will be things like
-        a, h etc).
-
-        If dims is None, use the internal autoconvert state to perform the conversion."""
-
-        if dims is None:
-            dims = self.ancestor._autoconvert
-        if dims is None:
-            return
-        if (ar.units is not None) and (ar.units is not units.no_unit):
-            try:
-                d = ar.units.dimensional_project(dims)
-            except units.UnitsException:
-                return
-            new_unit = reduce(lambda x, y: x * y, [
-                              a ** b for a, b in zip(dims, d[:ucut])])
-            if new_unit != ar.units:
-
-                ar.convert_units(new_unit)
 
 
     def _a_dot(self):
@@ -658,7 +556,7 @@ class Snapshot(SimSnap):
         Check the ability of this snapshot to load new particles
         '''
 
-        if self.__canloadPT:
+        if self._canloadPT:
             return 'able'
         else:
             return 'locked'
@@ -668,7 +566,7 @@ class Snapshot(SimSnap):
         shift to the specific position
         then set its pos, vel, phi, acc to 0.
         '''
-        
+        self._canloadPT=False
         if pos is not None:
             self['pos']-=pos
             self.__pos.convert_units(self['pos'].units)
@@ -705,8 +603,6 @@ class Snapshot(SimSnap):
         ``r_cal`` The size of the sphere to use for the velocity calculate
 
         '''
-
-
         if pos==None:
             pos=self.center(mode)
 
@@ -848,10 +744,6 @@ class Snapshot(SimSnap):
         return np.sort(list(self.__PT_loaded['Subhalo'].copy()))
     
     @property
-    def eps(self):
-        return self.properties['eps']
-    
-    @property
     def rho_crit(self):
         z = self.z
         omM = self.omegaM0
@@ -867,51 +759,3 @@ class Snapshot(SimSnap):
     @property
     def snapshot(self):
         return self.properties['Snapshot']
-
-    @property
-    def run(self):
-        return self.properties['run']
-
-    @property
-    def ns(self):
-        return self.properties['ns']
-
-    @property
-    def sigma8(self):
-        return self.properties['sigma8']
-
-    @property
-    def omegaB0(self):
-        return self.properties['omegaB0']
-
-    @property
-    def omegaL0(self):
-        return self.properties['omegaL0']
-
-    @property
-    def omegaM0(self):
-        return self.properties['omegaM0']
-
-    @property
-    def boxsize(self):
-        return self.properties['boxsize']
-
-    @property
-    def h(self):
-        return self.properties['h']
-
-    @property
-    def t(self):
-        return self.properties['t']
-    
-    @property
-    def tLB(self):
-        return self.properties['tLB']
-    
-    @property
-    def a(self):
-        return self.properties['a']
-    
-    @property
-    def z(self):
-        return self.properties['z']
