@@ -52,7 +52,7 @@ class Halo(SubSnap):
         self.GC['HaloID']=int(simarray.filename.split('_')[-1])
         
 
-    def _load_GC(self):
+    def load_GC(self):
         """
         Loads the group catalog data for this halo and updates its properties.
         """
@@ -367,7 +367,7 @@ class Halo(SubSnap):
         elif set(['baryon']) & set([family.lower()]):
             slice1=self._get_family_slice(get_family('s'))
             slice2=self._get_family_slice(get_family('g'))
-            selfam=self[np.append(np.arange(len(self)[slice1],len(self)[slice2])).astype(np.int64)]
+            selfam=self[np.append(np.arange(len(self))[slice1],np.arange(len(self))[slice2]).astype(np.int64)]
         else:
             print('callfor wrong !!!')
             return
@@ -397,8 +397,10 @@ class Halo(SubSnap):
         except:
             pass
         
-        if name in self.properties:
+        try:
             return self.properties[name]
+        except:
+            pass
         
         if name in self.GC:
             return self.GC[name]
@@ -523,12 +525,12 @@ class Halos:
         ku=SimArray(np.array(k),k[0].units)
         return ku
 
-    def _load_GC(self):
+    def load_GC(self):
         """
         Loads the group catalog data for all Halo objects in the _data dictionary.
         """
         for i in self._data:
-            self._data[i]._load_GC()
+            self._data[i].load_GC()
 
     
     def _generate_value(self, key):

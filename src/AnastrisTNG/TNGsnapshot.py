@@ -798,6 +798,21 @@ def t(d):
     return get_t(omega_m, redshift, H0_kmsMpc)
 
 @simdict.SimDict.getter
+def rho_crit(d):
+    z = d['z']
+    omM = d['omegaM0']
+    omL = d['omegaL0']
+    h0 = d['h']
+    a = d['a']
+    omK = 1.0 - omM - omL
+    _a_dot = h0 * a * np.sqrt(omM * (a ** -3) + omK * (a ** -2) + omL)
+    H_z = _a_dot /a
+    H_z = units.Unit("100 km s^-1 Mpc^-1") * H_z
+
+    rho_crit = (3 * H_z ** 2) / (8 * np.pi * units.G)
+    return rho_crit
+
+@simdict.SimDict.getter
 def tLB(d):
     """
     Calculate the lookback time.
@@ -809,6 +824,18 @@ def tLB(d):
 
     tlb = get_t(omega_m,redshift,H0_kmsMpc) - d['t']
     return tlb
+
+
+@simdict.SimDict.getter
+def cosmology(d):
+    cos={}
+    cos['h']=d.get('h')
+    cos['omegaM0']=d.get('omegaM0')
+    cos['omegaL0']=d.get('omegaL0')
+    cos['omegaB0']=d.get('omegaB0')
+    cos['sigma8']=d.get('sigma8')
+    cos['ns']=d.get('ns')
+    return cos
 
 def get_t(omega_m, redshift, H0_kmsMpc):
     import math

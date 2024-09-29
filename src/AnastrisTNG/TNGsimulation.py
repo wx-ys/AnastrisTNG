@@ -238,10 +238,10 @@ class Snapshot(SimSnap):
         Load the group catalog (GC) data for halos and subhalos into the snapshot.
         """
         
-        self.subhalos._load_GC()
+        self.subhalos.load_GC()
         for i in self.subhalos.keys():
             self.__GC_loaded['Subhalo'].add(int(i))
-        self.halos._load_GC()
+        self.halos.load_GC()
         for i in self.halos.keys():
             self.__GC_loaded['Halo'].add(int(i))
 
@@ -277,7 +277,7 @@ class Snapshot(SimSnap):
                 ind[self._get_family_slice(f)] = i
 
             self._family_index_cached = ind
-            self.halos[haloID]._load_GC()
+            self.halos[haloID].load_GC()
             self.subhalos.update()
             self.halos.update()
             self.__PT_loaded['Halo'].add(haloID)
@@ -340,7 +340,7 @@ class Snapshot(SimSnap):
                 ind[self._get_family_slice(f)] = i
             self._family_index_cached = ind
 
-            self.subhalos[subhaloID]._load_GC()
+            self.subhalos[subhaloID].load_GC()
             self['HaloID'][self['SubhaloID']==subhaloID]=self.subhalos[subhaloID].GC['SubhaloGrNr']
             self.subhalos.update()
             self.halos.update()
@@ -508,8 +508,10 @@ class Snapshot(SimSnap):
         except:
             pass
         
-        if name in self.properties:
+        try:
             return self.properties[name]
+        except:
+            pass
         
         raise AttributeError("%r object has no attribute %r" % (
             type(self).__name__, name))
@@ -538,18 +540,7 @@ class Snapshot(SimSnap):
         pa['bh_fields']=[]
         self.load_particle_para=pa
 
-
-    def _a_dot(self):
-        a=self.a
-        h0=self.h
-        om_m=self.omegaM0
-        om_l=self.omegaL0
-        om_k = 1.0 - om_m - om_l
-        return  h0 * a * np.sqrt(om_m * (a ** -3) + om_k * (a ** -2) + om_l)
     
-
-    
-
     @property
     def status_loadPT(self):
         '''
@@ -717,17 +708,6 @@ class Snapshot(SimSnap):
 
     
     @property
-    def cosmology(self):
-        cos={}
-        cos['h']=self.properties.get('h')
-        cos['omegaM0']=self.properties.get('omegaM0')
-        cos['omegaL0']=self.properties.get('omegaL0')
-        cos['omegaB0']=self.properties.get('omegaB0')
-        cos['sigma8']=self.properties.get('sigma8')
-        cos['ns']=self.properties.get('ns')
-        return cos
-
-    @property
     def GC_loaded_Subhalo(self):
         return np.sort(list(self.__GC_loaded['Subhalo'].copy()))
     
@@ -742,19 +722,6 @@ class Snapshot(SimSnap):
     @property
     def PT_loaded_Subhalo(self):
         return np.sort(list(self.__PT_loaded['Subhalo'].copy()))
-    
-    @property
-    def rho_crit(self):
-        z = self.z
-        omM = self.omegaM0
-        omL = self.omegaL0
-        h0 = self.h
-        a = self.a
-        H_z = self._a_dot() /a
-        H_z = units.Unit("100 km s^-1 Mpc^-1") * H_z
-
-        rho_crit = (3 * H_z ** 2) / (8 * np.pi * units.G)
-        return rho_crit
     
     @property
     def snapshot(self):

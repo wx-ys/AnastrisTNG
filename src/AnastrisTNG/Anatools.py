@@ -151,6 +151,7 @@ def fit_krotmax(pos,vel,mass, method='BFGS'):
             'krotmax': (1-res.fun/100),
             'krotvec': (res.x/np.linalg.norm(res.x)),
             'krotmat': calc_faceon_matrix(res.x),
+            'angle': angle_between_vectors(res.x, np.array([0,0,1]))
         }
         return result
     else:

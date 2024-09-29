@@ -7,11 +7,12 @@ import numpy as np
 from pynbody import units,filt
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
+from pynbody.family import get_family
 from pynbody.analysis.angmom import calc_faceon_matrix
 from pynbody.analysis.halo import virial_radius
 from pynbody.snapshot import SubSnap
 
-from AnastrisTNG.Anatools import ang_mom
+from AnastrisTNG.Anatools import ang_mom, fit_krotmax
 from AnastrisTNG.TNGunits import NotneedtransGCPa
 from AnastrisTNG.TNGgroupcat import subhaloproperties
 class Subhalo(SubSnap):
@@ -52,7 +53,7 @@ class Subhalo(SubSnap):
         
 
         
-    def _load_GC(self):
+    def load_GC(self):
         """
         Loads the group catalog data for this halo and updates its properties.
         """
@@ -327,7 +328,7 @@ class Subhalo(SubSnap):
             if (phi is not None) and ('phi' in self):
                 self['phi'] -= phi
 
-    def R_vir(self, overden:float = 178, cen=None) -> SimArray:
+    def R_vir(self, overden: float = 178, cen=None) -> SimArray:
         """
         the virial radius of the subhalo.
 
@@ -343,19 +344,31 @@ class Subhalo(SubSnap):
         R = virial_radius(self, cen=cen, overden=overden, rho_def='critical')
         return R
     
-    def krot(self, rmax: float = None, callfor: str ='star')-> np.ndarray:
+    def krot(self, rmax: float = None, calfor: str ='star', **kwargs) -> np.ndarray:
         
-        filtbyr=self._sele_family(callfor, rmax=rmax)
-        return np.array(np.sum((0.5 *filtbyr['mass']* (filtbyr['vcxy'] ** 2)))/np.sum(filtbyr['mass']*filtbyr['ke']))   
+        filtbyr=self._sele_family(calfor, rmax=rmax)
+        
+        calmode = kwargs.get('calmode', 'now')
+        
+        if calmode == 'now':
+            return np.array(np.sum((0.5 *filtbyr['mass']* (filtbyr['vcxy'] ** 2)))/np.sum(filtbyr['mass']*filtbyr['ke']))   
+        if calmode == 'max':
+            fitmethod = kwargs.get('fitmethod', 'BFGS')
+            result = fit_krotmax(filtbyr['pos'].view(np.ndarray),
+                        filtbyr['vel'].view(np.ndarray),
+                        filtbyr['mass'].view(np.ndarray), method = fitmethod)
+            return result
+        print('No such calmode')
+        return 
     
     
-    def R(self, frac: float = 0.5, callfor: str ='star', **kwargs) -> SimArray:
+    def R(self, frac: float = 0.5, calfor: str ='star', **kwargs) -> SimArray:
 
-        return self.__call_r('rxy',frac,callfor, **kwargs)
+        return self.__call_r('rxy',frac,calfor, **kwargs)
     
-    def r(self, frac: float = 0.5, callfor: str = 'star', **kwargs) -> SimArray:
+    def r(self, frac: float = 0.5, calfor: str = 'star', **kwargs) -> SimArray:
         
-        return self.__call_r('r',frac,callfor, **kwargs)
+        return self.__call_r('r',frac,calfor, **kwargs)
     
     def _sele_family(self,family, **kwargs):
         rmax = kwargs.get('rmax',None)
@@ -370,18 +383,18 @@ class Subhalo(SubSnap):
         elif set(['baryon']) & set([family.lower()]):
             slice1=self._get_family_slice(get_family('s'))
             slice2=self._get_family_slice(get_family('g'))
-            selfam=self[np.append(np.arange(len(self)[slice1],len(self)[slice2])).astype(np.int64)]
+            selfam=self[np.append(np.arange(len(self))[slice1],np.arange(len(self))[slice2]).astype(np.int64)]
         else:
-            print('callfor wrong !!!')
+            print('calfor wrong !!!')
             return
         if rmax:
             selfam = selfam[filt.Sphere(rmax)]
             
         return selfam
     
-    def __call_r(self,callkeys: str = 'r', frac: float = 0.5, callfor: str = 'star', **kwargs) -> SimArray:
+    def __call_r(self,callkeys: str = 'r', frac: float = 0.5, calfor: str = 'star', **kwargs) -> SimArray:
         
-        calfam=self._sele_family(callfor, **kwargs)
+        calfam=self._sele_family(calfor, **kwargs)
         
         callpa=calfam['mass']
         pacric=frac*callpa.sum()
@@ -400,8 +413,10 @@ class Subhalo(SubSnap):
         except:
             pass
         
-        if name in self.properties:
+        try:
             return self.properties[name]
+        except:
+            pass
         if name in self.GC:
             return self.GC[name]
         raise AttributeError("%r object has no attribute %r" % (
@@ -532,12 +547,12 @@ class Subhalos:
 
 
 
-    def _load_GC(self):
+    def load_GC(self):
         """
         Loads the group catalog data for all stored subhalos.
         """
         for i in self._data:
-            self._data[i]._load_GC()
+            self._data[i].load_GC()
 
     def _generate_value(self, key):
         """
