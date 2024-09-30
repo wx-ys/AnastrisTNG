@@ -6,6 +6,7 @@ potential: cal_potential, cal_acceleration, Function.
 galaxy profile: Profile_1D(). Class.
 ...
 '''
+
 from typing import List
 import multiprocessing as mp
 
@@ -19,6 +20,7 @@ from pynbody.analysis.profile import Profile as _Profile
 from AnastrisTNG.illustris_python.snapshot import *
 from AnastrisTNG.Anatools import orbit
 from AnastrisTNG.pytreegrav import PotentialTarget, AccelTarget
+
 
 def cal_potential(sim, targetpos):
     """
@@ -36,16 +38,20 @@ def cal_potential(sim, targetpos):
     phi : SimArray
         The gravitational potential at the target positions.
     """
-    
+
     try:
-        eps = sim.properties.get('eps',0)
+        eps = sim.properties.get('eps', 0)
     except:
         eps = 0
     if eps == 0:
         print('Calculate the gravity without softening length')
-    pot = PotentialTarget(targetpos, sim['pos'].view(np.ndarray), sim['mass'].view(np.ndarray),
-                            np.repeat(eps, len(targetpos)).view(np.ndarray))
-    phi = SimArray(pot, units.G*sim['mass'].units / sim['pos'].units)
+    pot = PotentialTarget(
+        targetpos,
+        sim['pos'].view(np.ndarray),
+        sim['mass'].view(np.ndarray),
+        np.repeat(eps, len(targetpos)).view(np.ndarray),
+    )
+    phi = SimArray(pot, units.G * sim['mass'].units / sim['pos'].units)
     phi.sim = sim
     return phi
 
@@ -67,20 +73,28 @@ def cal_acceleration(sim, targetpos):
         The gravitational acceleration at the target positions.
     """
     try:
-        eps = sim.properties.get('eps',0)
+        eps = sim.properties.get('eps', 0)
     except:
         eps = 0
     if eps == 0:
         print('Calculate the gravity without softening length')
-    accelr = AccelTarget(targetpos,sim['pos'].view(np.ndarray), sim['mass'].view(np.ndarray),
-                        np.repeat(eps,len(targetpos)).view(np.ndarray))
-    acc = SimArray(accelr, units.G*sim['mass'].units / sim['pos'].units / sim['pos'].units)
+    accelr = AccelTarget(
+        targetpos,
+        sim['pos'].view(np.ndarray),
+        sim['mass'].view(np.ndarray),
+        np.repeat(eps, len(targetpos)).view(np.ndarray),
+    )
+    acc = SimArray(
+        accelr, units.G * sim['mass'].units / sim['pos'].units / sim['pos'].units
+    )
     acc.sim = sim
     return acc
 
 
 class Profile_1D:
-    def __init__(self, sim, ndim=2, type='lin', nbins=100, rmin=0.1, rmax=100., **kwargs):
+    def __init__(
+        self, sim, ndim=2, type='lin', nbins=100, rmin=0.1, rmax=100.0, **kwargs
+    ):
         """
         Initializes the profile object for different types of particles in the simulation.
 
@@ -101,14 +115,23 @@ class Profile_1D:
         **kwargs : additional keyword arguments
             Additional parameters to pass to the Profile initialization.
         """
-        print("Profile_1D -- assumes it's already at the center, and the disk is in the x-y plane")
+        print(
+            "Profile_1D -- assumes it's already at the center, and the disk is in the x-y plane"
+        )
         print("If not, please use face_on()")
-        self.__Pall = _Profile(sim, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
-        self.__Pstar = _Profile(sim.s, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
-        self.__Pgas = _Profile(sim.g, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
-        self.__Pdm = _Profile(sim.dm, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs)
+        self.__Pall = _Profile(
+            sim, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
+        )
+        self.__Pstar = _Profile(
+            sim.s, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
+        )
+        self.__Pgas = _Profile(
+            sim.g, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
+        )
+        self.__Pdm = _Profile(
+            sim.dm, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
+        )
 
-        
         self.__properties = {}
         self.__properties['Qgas'] = self.Qgas
         self.__properties['Qstar'] = self.Qstar
@@ -116,59 +139,76 @@ class Profile_1D:
         self.__properties['Q2thin'] = self.Q2thin
         self.__properties['Q2thick'] = self.Q2thick
 
-
-
         def v_circ(p, grav_sim=None):
             """Circular velocity, i.e. rotation curve. Calculated by computing the gravity
             in the midplane - can be expensive"""
-            #print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
+            # print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
             grav_sim = grav_sim or p.sim
-            cal_2 = np.sqrt(2)/2
-            basearray = np.array([(1,0,0), (0,1,0), (-1,0,0), (0,-1,0),
-                                (cal_2,cal_2,0), (-cal_2,cal_2,0),
-                                (cal_2,-cal_2,0), (-cal_2,-cal_2,0)])
+            cal_2 = np.sqrt(2) / 2
+            basearray = np.array(
+                [
+                    (1, 0, 0),
+                    (0, 1, 0),
+                    (-1, 0, 0),
+                    (0, -1, 0),
+                    (cal_2, cal_2, 0),
+                    (-cal_2, cal_2, 0),
+                    (cal_2, -cal_2, 0),
+                    (-cal_2, -cal_2, 0),
+                ]
+            )
             R = p['rbins'].in_units('kpc').copy()
-            POS = np.array([(0,0,0)])
+            POS = np.array([(0, 0, 0)])
             for j in R:
-                binsr = basearray*j
-                POS = np.concatenate((POS,binsr), axis=0)
-            POS = SimArray(POS,R.units)
+                binsr = basearray * j
+                POS = np.concatenate((POS, binsr), axis=0)
+            POS = SimArray(POS, R.units)
             ac = cal_acceleration(grav_sim, POS)
             ac.convert_units('kpc Gyr**-2')
             POS.convert_units('kpc')
-            velall = np.diag(np.dot(ac-ac[0], -POS.T))
+            velall = np.diag(np.dot(ac - ac[0], -POS.T))
             if 'units' in dir(velall):
                 velall.units = units.kpc**2 / units.Gyr**2
             else:
-                velall = SimArray(velall,units.kpc**2 / units.Gyr**2)
+                velall = SimArray(velall, units.kpc**2 / units.Gyr**2)
             velTrue = np.zeros(len(R))
             for i in range(len(R)):
-                velTrue[i] = np.mean(velall[i+1 : 8*(i+1)+1])
-            velTrue[velTrue<0] = 0
+                velTrue[i] = np.mean(velall[i + 1 : 8 * (i + 1) + 1])
+            velTrue[velTrue < 0] = 0
             velTrue = np.sqrt(velTrue)
-            velTrue = SimArray(velTrue, units.kpc/units.Gyr)
+            velTrue = SimArray(velTrue, units.kpc / units.Gyr)
             velTrue.convert_units('km s**-1')
             velTrue.sim = grav_sim.ancestor
             return velTrue
+
         def pot(p, grav_sim=None):
             grav_sim = grav_sim or p.sim
-            cal_2 = np.sqrt(2)/2
-            basearray = np.array([(1,0,0),(0,1,0),(-1,0,0),(0,-1,0),
-                                (cal_2,cal_2,0),(-cal_2,cal_2,0),
-                                (cal_2,-cal_2,0),(-cal_2,-cal_2,0)])
+            cal_2 = np.sqrt(2) / 2
+            basearray = np.array(
+                [
+                    (1, 0, 0),
+                    (0, 1, 0),
+                    (-1, 0, 0),
+                    (0, -1, 0),
+                    (cal_2, cal_2, 0),
+                    (-cal_2, cal_2, 0),
+                    (cal_2, -cal_2, 0),
+                    (-cal_2, -cal_2, 0),
+                ]
+            )
             R = p['rbins'].in_units('kpc').copy()
-            POS = np.array([(0,0,0)])
+            POS = np.array([(0, 0, 0)])
             for j in R:
-                binsr = basearray*j
-                POS = np.concatenate((POS,binsr), axis=0)
-            POS = SimArray(POS,R.units)
-            po = cal_potential(grav_sim,POS)
+                binsr = basearray * j
+                POS = np.concatenate((POS, binsr), axis=0)
+            POS = SimArray(POS, R.units)
+            po = cal_potential(grav_sim, POS)
             po.conver_units('km**2 s**-2')
             poall = np.zeros(len(R))
             for i in range(len(R)):
-                poall[i] = np.mean(po[i+1:8*(i+1)+1])
-            
-            poall = SimArray(poall,po.units)
+                poall[i] = np.mean(po[i + 1 : 8 * (i + 1) + 1])
+
+            poall = SimArray(poall, po.units)
             poall.sim = grav_sim.ancestor
             return poall
 
@@ -177,6 +217,7 @@ class Profile_1D:
             prof = p['v_circ'] / p['rbins']
             prof.convert_units('km s**-1 kpc**-1')
             return prof
+
         self.__Pall._profile_registry[v_circ.__name__] = v_circ
         self.__Pall._profile_registry[omega.__name__] = omega
         self.__Pall._profile_registry[pot.__name__] = pot
@@ -192,12 +233,12 @@ class Profile_1D:
         self.__Pdm._profile_registry[v_circ.__name__] = v_circ
         self.__Pdm._profile_registry[omega.__name__] = omega
         self.__Pdm._profile_registry[pot.__name__] = pot
-    
+
     def __getitem__(self, key):
-        
+
         if isinstance(key, str):
             ks = key.split('-')
-            if len(ks)>1:
+            if len(ks) > 1:
                 if set(['star', 's', 'Star']) & set(ks):
                     return self.__Pstar[ks[0]]
                 if set(['gas', 'g', 'Gas']) & set(ks):
@@ -214,84 +255,161 @@ class Profile_1D:
         else:
             print('Type error, should input a str')
             return
+
     def Qgas(self):
         '''
         Toomre-Q for gas
         '''
-        return (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        return (
+            self.__Pall['kappa']
+            * self.__Pgas['vr_disp']
+            / (np.pi * self.__Pgas['density'] * units.G)
+        ).in_units("")
+
     def Qstar(self):
         '''
         Toomre-Q parameter
         '''
-        return (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (3.36 * self.__Pstar['density'] * units.G)).in_units("")
+        return (
+            self.__Pall['kappa']
+            * self.__Pstar['vr_disp']
+            / (3.36 * self.__Pstar['density'] * units.G)
+        ).in_units("")
+
     def Q2ws(self):
         '''
         Toomre Q of two component. Wang & Silk (1994)
         '''
-        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
-        return (Qs*Qg) / (Qs+Qg)
+        Qs = (
+            self.__Pall['kappa']
+            * self.__Pstar['vr_disp']
+            / (np.pi * self.__Pstar['density'] * units.G)
+        ).in_units("")
+        Qg = (
+            self.__Pall['kappa']
+            * self.__Pgas['vr_disp']
+            / (np.pi * self.__Pgas['density'] * units.G)
+        ).in_units("")
+        return (Qs * Qg) / (Qs + Qg)
+
     def Q2thin(self):
         '''
         The effective Q of two component thin disk. Romeo & Wiegert (2011) eq. 6.
         '''
-        w = (2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp'] / ((self.__Pstar['vr_disp'])**2+self.__Pgas['vr_disp']**2)).in_units("")
-        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
+        w = (
+            2
+            * self.__Pstar['vr_disp']
+            * self.__Pgas['vr_disp']
+            / ((self.__Pstar['vr_disp']) ** 2 + self.__Pgas['vr_disp'] ** 2)
+        ).in_units("")
+        Qs = (
+            self.__Pall['kappa']
+            * self.__Pstar['vr_disp']
+            / (np.pi * self.__Pstar['density'] * units.G)
+        ).in_units("")
+        Qg = (
+            self.__Pall['kappa']
+            * self.__Pgas['vr_disp']
+            / (np.pi * self.__Pgas['density'] * units.G)
+        ).in_units("")
 
-        q = [Qs*Qg / (Qs+w*Qg)]
-        return [Qs[i]*Qg[i]/(Qs[i]+w[i]*Qg[i]) if Qs[i]>Qg[i] else Qs[i]*Qg[i]/(w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
+        q = [Qs * Qg / (Qs + w * Qg)]
+        return [
+            (
+                Qs[i] * Qg[i] / (Qs[i] + w[i] * Qg[i])
+                if Qs[i] > Qg[i]
+                else Qs[i] * Qg[i] / (w[i] * Qs[i] + Qg[i])
+            )
+            for i in range(len(w))
+        ]
+
     def Q2thick(self):
         '''
-        The effective Q of two component thick disk. Romeo & Wiegert (2011) eq. 9. 
+        The effective Q of two component thick disk. Romeo & Wiegert (2011) eq. 9.
         '''
-        w = (2*self.__Pstar['vr_disp']*self.__Pgas['vr_disp']/((self.__Pstar['vr_disp'])**2 + self.__Pgas['vr_disp']**2)).in_units("")
-        Ts = 0.8+0.7*(self.__Pstar['vz_disp'] / self.__Pstar['vr_disp']).in_units("")
-        Tg = 0.8+0.7*(self.__Pgas['vz_disp'] / self.__Pgas['vr_disp']).in_units("")
-        Qs = (self.__Pall['kappa']*self.__Pstar['vr_disp'] / (np.pi * self.__Pstar['density'] * units.G)).in_units("")
-        Qg = (self.__Pall['kappa']*self.__Pgas['vr_disp'] / (np.pi * self.__Pgas['density'] * units.G)).in_units("")
-        Qs = Qs*Ts
-        Qg = Qg*Tg
-        return [Qs[i]*Qg[i] / (Qs[i]+w[i]*Qg[i]) if Qs[i] > Qg[i] else Qs[i]*Qg[i] / (w[i]*Qs[i]+Qg[i]) for i in range(len(w))] 
+        w = (
+            2
+            * self.__Pstar['vr_disp']
+            * self.__Pgas['vr_disp']
+            / ((self.__Pstar['vr_disp']) ** 2 + self.__Pgas['vr_disp'] ** 2)
+        ).in_units("")
+        Ts = 0.8 + 0.7 * (self.__Pstar['vz_disp'] / self.__Pstar['vr_disp']).in_units(
+            ""
+        )
+        Tg = 0.8 + 0.7 * (self.__Pgas['vz_disp'] / self.__Pgas['vr_disp']).in_units("")
+        Qs = (
+            self.__Pall['kappa']
+            * self.__Pstar['vr_disp']
+            / (np.pi * self.__Pstar['density'] * units.G)
+        ).in_units("")
+        Qg = (
+            self.__Pall['kappa']
+            * self.__Pgas['vr_disp']
+            / (np.pi * self.__Pgas['density'] * units.G)
+        ).in_units("")
+        Qs = Qs * Ts
+        Qg = Qg * Tg
+        return [
+            (
+                Qs[i] * Qg[i] / (Qs[i] + w[i] * Qg[i])
+                if Qs[i] > Qg[i]
+                else Qs[i] * Qg[i] / (w[i] * Qs[i] + Qg[i])
+            )
+            for i in range(len(w))
+        ]
 
 
-class Star_birth():
+class Star_birth:
     '''the pos when the star form according to the host galaxy position'''
-    
+
     def __init__(self, Snap, subID):
         '''
         input:
         Snap,
         subID,
         '''
-        
-        if ('BirthPos' not in Snap.load_particle_para['star_fields']
-        or 'GFM_StellarFormationTime' not in Snap.load_particle_para['star_fields']):
-            print('Snap need BirthPos and GFM_StellarFormationTime in load_particle_para')
+
+        if (
+            'BirthPos' not in Snap.load_particle_para['star_fields']
+            or 'GFM_StellarFormationTime' not in Snap.load_particle_para['star_fields']
+        ):
+            print(
+                'Snap need BirthPos and GFM_StellarFormationTime in load_particle_para'
+            )
             return
 
         PT = Snap.load_particle(subID)
         self.s = PT.s
-        
-        evo = Snap.galaxy_evolution(subID,['SubhaloPos','SubhaloVel','SubhaloSpin'],physical_units = False)
-        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray)/0.6774
-        
-        vel_ckpcGyr = (evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']).T
+
+        evo = Snap.galaxy_evolution(
+            subID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin'], physical_units=False
+        )
+        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / 0.6774
+
+        vel_ckpcGyr = (
+            evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']
+        ).T
         time_Gyr = evo['t'].in_units('Gyr')
-        self.orbit = orbit(pos_ckpc,vel_ckpcGyr, time_Gyr)
+        self.orbit = orbit(pos_ckpc, vel_ckpcGyr, time_Gyr)
         self.s['BirthPos'].convert_units('a kpc')
-        Birthpos = self.s['BirthPos'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
-        Birtha = self.s['aform'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
-        pos,vel = self.orbit.get(self.s['tform'].view(np.ndarray))
-        galapos = pos[(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)]
+        Birthpos = self.s['BirthPos'][
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ]
+        Birtha = self.s['aform'][
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ]
+        pos, vel = self.orbit.get(self.s['tform'].view(np.ndarray))
+        galapos = pos[
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ]
         distance = galapos - Birthpos
-        distance_in_kpc = (distance.T*Birtha).T
+        distance_in_kpc = (distance.T * Birtha).T
         self.s['pos'].convert_units('kpc')
         self.s['mass'].convert_units('Msol')
-        self.s['pos'][(self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)] = distance_in_kpc
-        
-        
-        
+        self.s['pos'][
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ] = distance_in_kpc
+
 
 def _process_file(file_info):
     """
@@ -330,38 +448,47 @@ def _process_file(file_info):
     """
     basePath, snapNum, fileNum, findIDset, istracerid = file_info
     result_local = {'ParentID': [], 'TracerID': []}
-    
+
     gName = "PartType3"
     fields = ['ParentID', 'TracerID']
-    
+
     with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
-       # print('open file')
+        # print('open file')
         if gName not in f:
             print('skip', fileNum)
             return result_local
-      #  print(len(f['PartType3']['TracerID'][:]))
+        #  print(len(f['PartType3']['TracerID'][:]))
         if istracerid:
-            findresult = findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+            findresult = findIDset.isdisjoint(
+                f['PartType3']['TracerID'][:]
+            )  # time complexity O( min(len(set1),len(set2)) )
         else:
             findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
-        
+
         if not findresult:
-            
+
             ParentID = np.array(f[gName]['ParentID'])
             TracerID = np.array(f[gName]['TracerID'])
-            
+
             if istracerid:
                 Findepatticle = np.isin(TracerID, list(findIDset))
             else:
                 Findepatticle = np.isin(ParentID, list(findIDset))
-            
+
             result_local['TracerID'] = TracerID[Findepatticle]
             result_local['ParentID'] = ParentID[Findepatticle]
-            
-    
+
     return result_local
 
-def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid: bool = False, NP: int = 6) -> dict:
+
+def findtracer_MP(
+    basePath: str,
+    snapNum: int,
+    findID: List[int],
+    *,
+    istracerid: bool = False,
+    NP: int = 6,
+) -> dict:
     """
     Find the tracers of specified IDs (ParentIDs or TracerIDs) using multiprocessing to speed up the search.
 
@@ -408,19 +535,19 @@ def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid:
         Trecerbefore = findtracer_MP(basePath, snapNumbefore, findID=Tracernow['TracerID'], istracerid=True)  # Link TracerID to progenitor ParticleIDs (ParentID)
         # Trecerbefore['ParentID'] contains the progenitor ParticleIDs (could be gas or star)
     """
-    
+
     result = {'ParentID': np.array([]), 'TracerID': np.array([])}
     findIDset = set(findID)
-    
+
     # Load header to determine number of particles
     with h5py.File(snapPath(basePath, snapNum), 'r') as f:
         header = dict(f['Header'].attrs.items())
         nPart = getNumPart(header)
-        numToRead = nPart[3]  #trecer num
-        
+        numToRead = nPart[3]  # trecer num
+
         if not numToRead:
             return result
-        
+
         # file num
         file_numbers = []
         i = 1
@@ -435,29 +562,41 @@ def findtracer_MP(basePath: str, snapNum: int, findID: List[int], *, istracerid:
             except FileNotFoundError:
                 break
     # mutiprocesses
-    with mp.Pool(processes = NP) as pool:
+    with mp.Pool(processes=NP) as pool:
         # date
-        file_infos = [(basePath, snapNum, fileNum, findIDset, istracerid) for fileNum in file_numbers]
-        
+        file_infos = [
+            (basePath, snapNum, fileNum, findIDset, istracerid)
+            for fileNum in file_numbers
+        ]
+
         # progressing bar
         with tqdm(total=len(file_infos)) as pbar:
             # Use imap to process files and update the progress bar
             for result_local in pool.imap_unordered(_process_file, file_infos):
-                result['TracerID'] = np.append(result['TracerID'], result_local['TracerID'])
-                result['ParentID'] = np.append(result['ParentID'], result_local['ParentID'])
-               # print(len(result_local['ParentID']),len(result['ParentID']))
+                result['TracerID'] = np.append(
+                    result['TracerID'], result_local['TracerID']
+                )
+                result['ParentID'] = np.append(
+                    result['ParentID'], result_local['ParentID']
+                )
+                # print(len(result_local['ParentID']),len(result['ParentID']))
                 pbar.update(1)
-    
+
     # Convert to integer type
     result['TracerID'] = result['TracerID'].astype(int)
     result['ParentID'] = result['ParentID'].astype(int)
-    
+
     return result
 
 
-
-def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bool = False,) -> dict:
-    """ 
+def findtracer(
+    basePath: str,
+    snapNum: int,
+    findID: List[int],
+    *,
+    istracerid: bool = False,
+) -> dict:
+    """
     Find the tracers of specified IDs (ParentIDs or TracerIDs) in the simulation data.
 
     Note:
@@ -480,7 +619,7 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
         A dictionary with keys:
             - 'ParentID': Array of matched ParentIDs.
             - 'TracerID': Array of matched TracerIDs.
-        Note: 
+        Note:
             - When matching ParentIDs, the number of tracers found may differ from the length of `findID` since a parent can have no or multiple tracers.
             - When matching TracerIDs, the number of tracers found must match the length of `findID`.
 
@@ -504,13 +643,13 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
     result = {}
     result['ParentID'] = np.array([])
     result['TracerID'] = np.array([])
-    
+
     # PartType3, tracer
     ptNum = 3
     gName = "PartType" + str(ptNum)
-    
+
     # Apart from ParentID and TracerID, there is also FluidQuantities in TNG100
-    fields = ['ParentID','TracerID']
+    fields = ['ParentID', 'TracerID']
 
     findIDset = set(findID)
 
@@ -519,15 +658,14 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
         header = dict(f['Header'].attrs.items())
         nPart = getNumPart(header)
 
-
         fileNum = 0
         fileOff = 0
         numToRead = nPart[ptNum]
-        
+
         if not numToRead:
 
             return result
- 
+
         i = 1
         while gName not in f:
             f = h5py.File(snapPath(basePath, snapNum, i), 'r')
@@ -538,16 +676,16 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
 
     wOffset = 0
     origNumToRead = numToRead
-    
+
     # progress bar
-    with tqdm(total = numToRead) as pbar:
+    with tqdm(total=numToRead) as pbar:
         while numToRead:
             f = h5py.File(snapPath(basePath, snapNum, fileNum), 'r')
 
             if gName not in f:
                 f.close()
                 fileNum += 1
-                fileOff  = 0
+                fileOff = 0
                 continue
 
             numTypeLocal = f['Header'].attrs['NumPart_ThisFile'][ptNum]
@@ -557,7 +695,9 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
                 numToReadLocal = numTypeLocal - fileOff
 
             if istracerid:
-                findresult = findIDset.isdisjoint(f['PartType3']['TracerID'][:])  # time complexity O( min(len(set1),len(set2)) )
+                findresult = findIDset.isdisjoint(
+                    f['PartType3']['TracerID'][:]
+                )  # time complexity O( min(len(set1),len(set2)) )
             else:
                 findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
 
@@ -565,27 +705,37 @@ def findtracer(basePath: str, snapNum: int, findID: List[int], *, istracerid: bo
                 ParentID = np.array(f['PartType3']['ParentID'])
                 TracerID = np.array(f['PartType3']['TracerID'])
                 if istracerid:
-                    Findepatticle = np.isin(TracerID,findID)                     # time complexity O( len(array1)*len(array2) ) 
+                    Findepatticle = np.isin(
+                        TracerID, findID
+                    )  # time complexity O( len(array1)*len(array2) )
                 else:
-                    Findepatticle = np.isin(ParentID,findID)
-                result['TracerID'] = np.append(result['TracerID'], TracerID[Findepatticle])
-                result['ParentID'] = np.append(result['ParentID'], ParentID[Findepatticle])
-                print('Number of tracers that have been matched: ', len(result['TracerID']))
+                    Findepatticle = np.isin(ParentID, findID)
+                result['TracerID'] = np.append(
+                    result['TracerID'], TracerID[Findepatticle]
+                )
+                result['ParentID'] = np.append(
+                    result['ParentID'], ParentID[Findepatticle]
+                )
+                print(
+                    'Number of tracers that have been matched: ',
+                    len(result['TracerID']),
+                )
 
-            wOffset   += numToReadLocal
+            wOffset += numToReadLocal
             numToRead -= numToReadLocal
-            fileNum   += 1
-            fileOff    = 0  
+            fileNum += 1
+            fileOff = 0
 
             f.close()
             pbar.update(numToReadLocal)
-            
+
             # if matching TracerIDs, the number of tracers found must be the same as the len(findID).
-            if istracerid and len(result['TracerID']) == len(findID):   
+            if istracerid and len(result['TracerID']) == len(findID):
                 break
     result['TracerID'] = result['TracerID'].astype(int)
     result['ParentID'] = result['ParentID'].astype(int)
     return result
+
 
 '''
 # form https://www.tng-project.org/data/forum/topic/274/match-snapshot-particles-with-their-halosubhalo/
