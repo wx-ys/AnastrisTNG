@@ -1,6 +1,10 @@
 '''
 Some useful functions
 orbit: fit the orbit, based on the observed pos,vel,t
+ang_mom: vector
+angle_between_vectors:
+fit_krotmax:
+
 '''
 
 import numpy as np

@@ -363,6 +363,53 @@ class Subhalo(SubSnap):
         print('No such calmode')
         return 
     
+    def sfh(self, mode: str = 'sfh', **kwargs):
+        nbins = kwargs.get('nbins',200)
+        massmode = kwargs.get('massmode','now')
+        if massmode == 'now':
+            weight=self.s['mass']
+        elif massmode == 'birth':
+            weight = self.s['GFM_InitialMass']
+        else:
+            print('No such massmode')
+            return
+        mass_h,evo_t=np.histogram(self.s['tform'],
+             bins=np.linspace(self.s['tform'].min().in_units('Gyr'),self.t.in_units('Gyr'),nbins),
+             weights=weight)
+        mass_h=SimArray(mass_h,weight.units)
+        evo_t=SimArray(evo_t,units.Gyr)
+        t_inter=np.diff(evo_t)
+        
+        SFR=(mass_h/(t_inter)).in_units('Msol yr**-1')
+        mass_cumsum=mass_h.cumsum()
+        
+        result={'t': evo_t[1:],
+                'sfr': SFR,
+                'mass': mass_cumsum,
+                }
+        return result
+    
+    def star_t(self, tmax: float, **kwargs):
+        if tmax > self.t.in_units('Gyr'):
+            print('tmax should be less than',self.t.in_units('Gyr'))
+            return
+        tmin = kwargs.get('tmin', 0)
+        if tmin > tmax:
+            print('tmin should be smaller than tmax. 0 is recommended')
+            return 
+        return self.s['mass'][(self.s['tform'].in_units('Gyr') < tmax) & (self.s['tform'].in_units('Gyr') > tmin)].sum()
+    
+    def t_star(self, frac: float = 0.5, **kwargs):
+        if (frac > 1) or (frac <=0):
+            print('frac should range from 0-1')
+            return 
+        
+        tform_sort = self.s['tform'][self.s['tform'].argsort()].in_units('Gyr')
+        mass_sort = self.s['mass'][self.s['tform'].argsort()]
+        masscrit = frac*mass_sort[tform_sort<self.t.in_units('Gyr')].sum()
+        mass_cumsum = mass_sort.cumsum()
+        return (tform_sort[mass_cumsum>masscrit].min()+tform_sort[mass_cumsum<masscrit].max())/2
+        
     
     def R(self, frac: float = 0.5, calfor: str ='star', **kwargs) -> SimArray:
 
@@ -399,13 +446,13 @@ class Subhalo(SubSnap):
         calfam=self._sele_family(calfor, **kwargs)
         
         callpa=calfam['mass']
-        pacric=frac*callpa.sum()
+        pacrit=frac*callpa.sum()
         callr=calfam[callkeys]
         args=np.argsort(callr)
         r_sort=callr[args]
         pa_sort=callpa[args]
         pa_cumsum=pa_sort.cumsum()
-        Rcall=(r_sort[pa_cumsum>pacric].min()+r_sort[pa_cumsum<pacric].max())/2
+        Rcall=(r_sort[pa_cumsum>pacrit].min()+r_sort[pa_cumsum<pacrit].max())/2
         
         return Rcall
     

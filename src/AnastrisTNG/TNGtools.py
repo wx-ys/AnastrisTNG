@@ -1,7 +1,9 @@
 '''
 Some useful tools
-find tracers: findtracer_MP(), findtracer(), function.
+find tracers: findtracer_MP(), findtracer(), Function.
 star both pos: Star_birth(), Class.
+potential: cal_potential, cal_acceleration, Function.
+galaxy profile: Profile_1D(). Class.
 ...
 '''
 from typing import List
@@ -269,7 +271,7 @@ class Star_birth():
             return
 
         PT = Snap.load_particle(subID)
-        self.s = PT.PT.s
+        self.s = PT.s
         
         evo = Snap.galaxy_evolution(subID,['SubhaloPos','SubhaloVel','SubhaloSpin'],physical_units = False)
         pos_ckpc = (evo['SubhaloPos']).view(np.ndarray)/0.6774
@@ -325,12 +327,6 @@ def _process_file(file_info):
     -----
     - This function is designed to be used with multiprocessing to improve performance when searching through large datasets.
     - It reads a specific file within a snapshot and checks for the presence of IDs in the dataset.
-
-    Example:
-    --------
-    To use with `findtracer_MP`:
-        file_info = (basePath, snapNum, fileNum, findIDset, istracerid)
-        result_local = process_file(file_info)
     """
     basePath, snapNum, fileNum, findIDset, istracerid = file_info
     result_local = {'ParentID': [], 'TracerID': []}

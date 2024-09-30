@@ -14,7 +14,7 @@ from pynbody.snapshot import SubSnap
 
 from AnastrisTNG.TNGgroupcat import haloproperties
 from AnastrisTNG.TNGunits import NotneedtransGCPa
-from AnastrisTNG.Anatools import ang_mom
+from AnastrisTNG.Anatools import ang_mom, fit_krotmax
 class Halo(SubSnap):
     """
     Represents a single halo in the simulation.
@@ -342,11 +342,68 @@ class Halo(SubSnap):
         R=virial_radius(self,cen=cen,overden=overden,rho_def='critical')
         return R
     
-    def krot(self, rmax: float = None, callfor: str = 'star')-> np.ndarray:
+    def krot(self, rmax: float = None, calfor: str ='star', **kwargs) -> np.ndarray:
         
-        filtbyr=self._sele_family(callfor, rmax=rmax)
-        return np.array(np.sum((0.5 *filtbyr['mass']* (filtbyr['vcxy'] ** 2)))/np.sum(filtbyr['mass']*filtbyr['ke']))   
+        filtbyr=self._sele_family(calfor, rmax=rmax)
+        
+        calmode = kwargs.get('calmode', 'now')
+        
+        if calmode == 'now':
+            return np.array(np.sum((0.5 *filtbyr['mass']* (filtbyr['vcxy'] ** 2)))/np.sum(filtbyr['mass']*filtbyr['ke']))   
+        if calmode == 'max':
+            fitmethod = kwargs.get('fitmethod', 'BFGS')
+            result = fit_krotmax(filtbyr['pos'].view(np.ndarray),
+                        filtbyr['vel'].view(np.ndarray),
+                        filtbyr['mass'].view(np.ndarray), method = fitmethod)
+            return result
+        print('No such calmode')
+        return 
     
+    def sfh(self, mode: str = 'sfh', **kwargs):
+        nbins = kwargs.get('nbins',200)
+        massmode = kwargs.get('massmode','now')
+        if massmode == 'now':
+            weight=self.s['mass']
+        elif massmode == 'birth':
+            weight = self.s['GFM_InitialMass']
+        else:
+            print('No such massmode')
+            return
+        mass_h,evo_t=np.histogram(self.s['tform'],
+             bins=np.linspace(self.s['tform'].min().in_units('Gyr'),self.t.in_units('Gyr'),nbins),
+             weights=weight)
+        mass_h=SimArray(mass_h,weight.units)
+        evo_t=SimArray(evo_t,units.Gyr)
+        t_inter=np.diff(evo_t)
+        
+        SFR=(mass_h/(t_inter)).in_units('Msol yr**-1')
+        mass_cumsum=mass_h.cumsum()
+        
+        result={'t': evo_t[1:],
+                'sfr': SFR,
+                'mass': mass_cumsum,
+                }
+        return result
+    def star_t(self, tmax: float, **kwargs):
+        if tmax > self.t.in_units('Gyr'):
+            print('tmax should be less than',self.t.in_units('Gyr'))
+            return
+        tmin = kwargs.get('tmin', 0)
+        if tmin > tmax:
+            print('tmin should be smaller than tmax. 0 is recommended')
+            return 
+        return self.s['mass'][(self.s['tform'].in_units('Gyr') < tmax) & (self.s['tform'].in_units('Gyr') > tmin)].sum()
+    
+    def t_star(self, frac: float = 0.5, **kwargs):
+        if (frac > 1) or (frac <=0):
+            print('frac should range from 0-1')
+            return 
+        
+        tform_sort = self.s['tform'][self.s['tform'].argsort()].in_units('Gyr')
+        mass_sort = self.s['mass'][self.s['tform'].argsort()]
+        masscrit = frac*mass_sort[tform_sort<self.t.in_units('Gyr')].sum()
+        mass_cumsum = mass_sort.cumsum()
+        return (tform_sort[mass_cumsum>masscrit].min()+tform_sort[mass_cumsum<masscrit].max())/2
     
     def R(self, frac: float = 0.5, callfor: str ='star', **kwargs) -> SimArray:
 
