@@ -277,9 +277,9 @@ class Snapshot(SimSnap):
                 ind[self._get_family_slice(f)] = i
 
             self._family_index_cached = ind
-            self.halos[haloID].load_GC()
             self.subhalos.update()
             self.halos.update()
+            self.halos[haloID].load_GC()
             self.__PT_loaded['Halo'].add(haloID)
             self.__GC_loaded['Halo'].add(haloID)
             if self.halos[haloID].GC['GroupFirstSub'] != -1:

@@ -50,6 +50,8 @@ class Halo(SubSnap):
         self.GC=SimDict()
         self.GC.update(simarray.properties)
         self.GC['HaloID']=int(simarray.filename.split('_')[-1])
+        if len(simarray)>0:
+            self.load_GC()
         
 
     def load_GC(self):

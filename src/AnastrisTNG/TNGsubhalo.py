@@ -50,6 +50,8 @@ class Subhalo(SubSnap):
         self.GC = SimDict()
         self.GC.update(simarray.properties)
         self.GC['SubhaloID'] = SubhaloID
+        if len(simarray)>0:
+            self.load_GC()
         
 
         
