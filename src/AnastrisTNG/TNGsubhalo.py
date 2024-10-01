@@ -256,9 +256,9 @@ class Subhalo(SubSnap):
 
         return
 
-    def ang_mom_vec(self, alignwith: str = 'all', rmax=None):
+    def ang_mom_vec(self, alignwith: str = 'all', rmax=None, **kwargs):
 
-        filtbyr = self._sele_family(alignwith, rmax=rmax)
+        filtbyr = self._sele_family(alignwith, rmax=rmax, **kwargs)
         angmom = ang_mom(filtbyr)
         return angmom
 
@@ -295,9 +295,9 @@ class Subhalo(SubSnap):
 
         self.shift(pos=pos_center, vel=vel_center)
         if alignmode == 'jc':
-            angmom = self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
+            angmom = self.ang_mom_vec(alignwith=alignwith, rmax=rmax, **kwargs)
         else:
-            angmom = self.ang_mom_vec(alignwith=alignwith, rmax=rmax)
+            angmom = self.ang_mom_vec(alignwith=alignwith, rmax=rmax, **kwargs)
 
         trans = calc_faceon_matrix(angmom)
         if shift:
@@ -371,7 +371,7 @@ class Subhalo(SubSnap):
 
     def krot(self, rmax: float = None, calfor: str = 'star', **kwargs) -> np.ndarray:
 
-        filtbyr = self._sele_family(calfor, rmax=rmax)
+        filtbyr = self._sele_family(calfor, rmax=rmax, **kwargs)
 
         calmode = kwargs.get('calmode', 'now')
 
@@ -431,18 +431,37 @@ class Subhalo(SubSnap):
         if tmin > tmax:
             print('tmin should be smaller than tmax. 0 is recommended')
             return
-        return self.s['mass'][
+        massmode = kwargs.get('massmode', 'now')
+        
+        if massmode == 'now':
+            return self.s['mass'][
             (self.s['tform'].in_units('Gyr') < tmax)
             & (self.s['tform'].in_units('Gyr') > tmin)
         ].sum()
+        elif massmode == 'birth':
+            return self.s['GFM_InitialMass'][
+            (self.s['tform'].in_units('Gyr') < tmax)
+            & (self.s['tform'].in_units('Gyr') > tmin)
+        ].sum()
+        else:
+            print('No such massmode')
+            return
+        
 
     def t_star(self, frac: float = 0.5, **kwargs):
         if (frac > 1) or (frac <= 0):
             print('frac should range from 0-1')
             return
-
+        massmode = kwargs.get('massmode', 'now')
         tform_sort = self.s['tform'][self.s['tform'].argsort()].in_units('Gyr')
-        mass_sort = self.s['mass'][self.s['tform'].argsort()]
+        if massmode == 'now':
+            mass_sort = self.s['mass'][self.s['tform'].argsort()]
+
+        elif massmode == 'birth':
+            mass_sort = self.s['GFM_InitialMass'][self.s['tform'].argsort()]
+        else:
+            print('No such massmode')
+            return
         masscrit = frac * mass_sort[tform_sort < self.t.in_units('Gyr')].sum()
         mass_cumsum = mass_sort.cumsum()
         return (
@@ -460,6 +479,11 @@ class Subhalo(SubSnap):
 
     def _sele_family(self, family, **kwargs):
         rmax = kwargs.get('rmax', None)
+        rmin = kwargs.get('rmin', None)
+        Rmax = kwargs.get('Rmax', None)
+        Rmin = kwargs.get('Rmin', None)
+        zmax = kwargs.get('zmax', None)
+        
         if set(['star', 's']) & set([family.lower()]):
             selfam = self.s
         elif set(['gas', 'g']) & set([family.lower()]):
@@ -481,6 +505,12 @@ class Subhalo(SubSnap):
             return
         if rmax:
             selfam = selfam[filt.Sphere(rmax)]
+        if rmax and rmin:
+            selfam = selfam[filt.Annulus(rmin, rmax)]
+        if Rmax and zmax:
+            selfam = selfam[filt.Disc(Rmax, zmax)]
+        if Rmax and zmax and Rmin:
+            selfam = selfam[filt.SolarNeighborhood(Rmax, Rmin, zmax)]
 
         return selfam
 
