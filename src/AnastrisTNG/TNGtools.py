@@ -361,6 +361,8 @@ class Profile_1D:
 
 class Star_birth:
     '''the pos when the star form according to the host galaxy position'''
+    
+    #TODO face on matrix; on the edge of boxsize
 
     def __init__(self, Snap, subID):
         '''

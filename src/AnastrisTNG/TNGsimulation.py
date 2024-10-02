@@ -4,7 +4,7 @@ Load illustrisTNG data and process it.
 
 from functools import reduce
 
-from pynbody.snapshot import SimSnap
+from pynbody.snapshot import SimSnap, new
 from pynbody import filt
 import h5py
 
@@ -19,8 +19,8 @@ from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.Anatools import ang_mom
 from AnastrisTNG.TNGsubhalo import Subhalos, Subhalo
-from AnastrisTNG.TNGhalo import Halos, Halo, calc_faceon_matrix
-from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty
+from AnastrisTNG.TNGhalo import Halos, Halo
+from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty, get_eps_Mdm, get_parttype,simsnap_cover, simsnap_merge
 from AnastrisTNG.pytreegrav import Accel, Potential, PotentialTarget, AccelTarget
 
 
@@ -63,10 +63,10 @@ class Snapshot(SimSnap):
         self._filename = "<created>"
         self._create_arrays(["pos", "vel"], 3)
         self._create_arrays(["mass"], 1)
-        self._family_slice[family.get_family('dm')] = slice(0, 0)
-        self._family_slice[family.get_family('star')] = slice(0, 0)
-        self._family_slice[family.get_family('gas')] = slice(0, 0)
-        self._family_slice[family.get_family('bh')] = slice(0, 0)
+        self._family_slice[get_family('dm')] = slice(0, 0)
+        self._family_slice[get_family('star')] = slice(0, 0)
+        self._family_slice[get_family('gas')] = slice(0, 0)
+        self._family_slice[get_family('bh')] = slice(0, 0)
         self._decorate()
         self.__set_Snapshot_property(BasePath, Snap)
         self.properties['filedir'] = BasePath
@@ -459,7 +459,7 @@ class Snapshot(SimSnap):
         )
 
         for party in self.load_particle_para['particle_field'].split(","):
-            if len(f[family.get_family(party)]) > 0:
+            if len(f[get_family(party)]) > 0:
                 if len(self.load_particle_para[party + '_fields']) > 0:
                     self.load_particle_para[party + '_fields'] = list(
                         set(
@@ -678,7 +678,7 @@ class Snapshot(SimSnap):
         """
 
         SnapshotHeader = loadHeader(BasePath, Snap)
-        self.properties = simdict.SimDict()
+        self.properties = SimDict()
         self.properties['read_Snap_properties'] = SnapshotHeader
         for i in self.properties:
             if 'sim' in dir(self.properties[i]):

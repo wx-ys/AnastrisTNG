@@ -1,269 +1,646 @@
 '''
-Analysis of radial distributions 
-Simsnap operations, overwrite and merge
+Basehalo for subhalo and halo
 Derived array for some particle types
 '''
 
 import types
+from functools import reduce
 
 import numpy as np
-from pynbody import simdict, units, family, derived_array
-from pynbody.snapshot import new
+from pynbody import units, filt, derived_array
+from pynbody.family import get_family
+from pynbody.simdict import SimDict
 from pynbody.array import SimArray
-
-from AnastrisTNG.illustris_python.groupcat import loadHeader
-from AnastrisTNG.TNGunits import illustrisTNGruns
+from pynbody.snapshot import SubSnap
+from pynbody.analysis.angmom import calc_faceon_matrix
+        
+from AnastrisTNG.TNGunits import illustrisTNGruns, NotneedtransGCPa
 from AnastrisTNG.pytreegrav import Potential, Accel
+from AnastrisTNG.Anatools import ang_mom, fit_krotmax
 
-
-##merge two simsnap and cover
-
-
-def simsnap_cover(f1, f2):
+class Basehalo(SubSnap):
     """
-    Overwrites the data in simsnap f1 with data from simsnap f2.
+    Represents a single halo in the simulation.
+
+    This class contains information about the particles of the halo and its corresponding group catalog data.
+    It also includes functions to compute properties specific to this halo.
+
+    Attributes:
+    ----------
+    GC : SimDict
+        The group catalog for this halo. Detailed information about this can be found at
+        https://www.tng-project.org/data/docs/specifications/#sec2.
 
     Parameters:
-    -----------
-    f1 : simsnap
-        The target simsnap to be overwritten.
-    f2 : simsnap
-        The source simsnap providing the data.
+    ----------
+    simarray : SimArray
+        An object containing the particle data for the halo.
+
     """
-    for i in f1:
-        del f1[i]
-    f1._num_particles = len(f2)
-    if len(f2.dm) > 0:
-        f1._family_slice[family.get_family('dm')] = f2._family_slice[
-            family.get_family('dm')
-        ]
-        for i in f1.dm:
-            del f1.dm[i]
-    if len(f2.s) > 0:
-        f1._family_slice[family.get_family('star')] = f2._family_slice[
-            family.get_family('star')
-        ]
-        for i in f1.s:
-            del f1.s[i]
-    if len(f2.g) > 0:
-        f1._family_slice[family.get_family('gas')] = f2._family_slice[
-            family.get_family('gas')
-        ]
-        for i in f1.g:
-            del f1.g[i]
-    if len(f2.bh) > 0:
-        f1._family_slice[family.get_family('bh')] = f2._family_slice[
-            family.get_family('bh')
-        ]
-        for i in f1.bh:
-            del f1.bh[i]
 
-    f1._create_arrays(["pos", "vel"], 3)
-    f1._create_arrays(["mass"], 1)
-    f1._decorate()
-    if len(f1.dm) > 0:
-        for i in f2.dm:
-            f1.dm[i] = f2.dm[i]
-    if len(f1.s) > 0:
-        for i in f2.s:
-            f1.s[i] = f2.s[i]
-    if len(f1.g) > 0:
-        for i in f2.g:
-            f1.g[i] = f2.g[i]
-    if len(f1.bh) > 0:
-        for i in f2.bh:
-            f1.bh[i] = f2.bh[i]
+    def __init__(self, simarray):
+        """
+        Initializes the Halo object.
+
+        Parameters:
+        -----------
+        simarray : object
+            An object that contains halo particles.
+        """
+        SubSnap.__init__(self, simarray, slice(len(simarray)))
+        self.GC = SimDict()
+        self.GC.update(simarray.properties)
 
 
-def simsnap_merge(f1, f2):
-    """
-    Merges twosimsnap f1 and f2 into a new simsnap f3.
-
-    Parameters:
-    -----------
-    f1 : simsnap
-        The first simsnap.
-    f2 : simsnap
-        The second simsnap.
-    Returns:
-    --------
-    f3 : simsnap
-        The new simsnap containing merged data from f1 and f2.
-    """
-    f3 = new(
-        star=len(f1.s) + len(f2.s),
-        gas=len(f1.g) + len(f2.g),
-        dm=len(f1.dm) + len(f2.dm),
-        bh=len(f1.bh) + len(f2.bh),
-        order='dm,star,gas,bh',
-    )
-    if len(f3.s) > 0:
-        if len(f1.s) == 0:
-            for i in f2.s:
-                f3.s[i] = f2.s[i]
-        elif len(f2.s) == 0:
-            for i in f1.s:
-                f3.s[i] = f1.s[i]
+    def physical_units(self, persistent: bool = False):
+        """
+        Convert the units of the simulation arrays and properties to physical units.
+            the conversion is temporary (default is False).
+        """
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.physical_units(persistent=persistent)
         else:
-            for i in f2.s:
-                f3.s[i] = SimArray(np.append(f1.s[i], f2.s[i], axis=0), f2.s[i].units)
+            dims = self.properties['baseunits'] + [units.a, units.h]
+            urc = len(dims) - 2
+            all = list(self.ancestor._arrays.values())
+            for x in self.ancestor._family_arrays:
+                if x in self.properties.get('staunit', []):
+                    continue
+                else:
+                    all += list(self.ancestor._family_arrays[x].values())
 
-    if len(f3.dm) > 0:
-        if len(f1.dm) == 0:
-            for i in f2.dm:
-                f3.dm[i] = f2.dm[i]
-        elif len(f2.dm) == 0:
-            for i in f1.dm:
-                f3.dm[i] = f1.dm[i]
-        else:
-            for i in f2.dm:
-                f3.dm[i] = SimArray(
-                    np.append(f1.dm[i], f2.dm[i], axis=0), f2.dm[i].units
+            for ar in all:
+                if ar.units is not units.no_unit:
+                    self._autoconvert_array_unit(ar.ancestor, dims, urc)
+
+            for k in list(self.properties):
+                v = self.properties[k]
+                if isinstance(v, units.UnitBase):
+                    try:
+                        new_unit = v.dimensional_project(dims)
+                    except units.UnitsException:
+                        continue
+                    new_unit = reduce(
+                        lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:])]
+                    )
+                    new_unit *= v.ratio(new_unit, **self.conversion_context())
+                    self.properties[k] = new_unit
+                if isinstance(v, SimArray):
+                    if (v.units is not None) and (v.units is not units.no_unit):
+                        try:
+                            d = v.units.dimensional_project(dims)
+                        except units.UnitsException:
+                            return
+                        new_unit = reduce(
+                            lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
+                        )
+                        if new_unit != v.units:
+                            self.properties[k].convert_units(new_unit)
+            self.GC_physical_units()
+            if persistent:
+                self._autoconvert = dims
+            else:
+                self._autoconvert = None
+
+    def GC_physical_units(self, distance='kpc', velocity='km s^-1', mass='Msol'):
+        """
+        Converts the units of the group catalog (GC) properties to physical units.
+
+        This method updates the `GC` attribute of the `Subhalo` instance to use physical units
+        for its properties, based on predefined unit conversions and the current unit context.
+
+        Conversion is applied only to properties that are not listed in `NotneedtransGCPa`.
+
+        Notes:
+        -----
+        - `self.ancestor.properties['baseunits']` provides the base units for dimensional analysis.
+        - The dimensional projection and conversion are handled using the `units` library.
+        - Properties listed in `NotneedtransGCPa` are skipped during the conversion process.
+        """
+        dims = self.ancestor.properties['baseunits'] + [units.a, units.h]
+        urc = len(dims) - 2
+        for k in list(self.GC):
+            if k in NotneedtransGCPa:
+                continue
+            v = self.GC[k]
+            if isinstance(v, units.UnitBase):
+                try:
+                    new_unit = v.dimensional_project(dims)
+                except units.UnitsException:
+                    continue
+                new_unit = reduce(
+                    lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:urc])]
                 )
+                new_unit *= v.ratio(new_unit, **self.conversion_context())
+                self.GC[k] = new_unit
+            if isinstance(v, SimArray):
+                if (v.units is not None) and (v.units is not units.no_unit):
+                    try:
+                        d = v.units.dimensional_project(dims)
+                    except units.UnitsException:
+                        return
+                    new_unit = reduce(
+                        lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
+                    )
+                    if new_unit != v.units:
+                        self.GC[k].convert_units(new_unit)
 
-    if len(f3.g) > 0:
-        if len(f1.g) == 0:
-            for i in f2.g:
-                f3.g[i] = f2.g[i]
-        elif len(f2.g) == 0:
-            for i in f1.g:
-                f3.g[i] = f1.g[i]
+    def vel_center(self, mode='ssc', pos=None, r_cal='1 kpc'):
+        '''
+        The center velocity.
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center
+
+        ``mode`` used to cal center pos see ``center``
+        ``pos``  Specified position.
+        ``r_cal`` The size of the sphere to use for the velocity calculate
+
+        '''
+        if self.__check_paticles():
+            print('No particles loaded in this Halo')
+            return
+
+        if pos == None:
+            pos = self.center(mode)
+
+        cen = self.s[filt.Sphere(r_cal, pos)]
+        if len(cen) < 5:
+            # fall-back to DM
+            cen = self.dm[filt.Sphere(r_cal, pos)]
+        if len(cen) < 5:
+            # fall-back to gas
+            cen = self.g[filt.Sphere(r_cal, pos)]
+        if len(cen) < 5:
+            cen = self[filt.Sphere(r_cal, pos)]
+        if len(cen) < 5:
+            # very weird snapshot, or mis-centering!
+            raise ValueError("Insufficient particles around center to get velocity")
+
+        vcen = (cen['vel'].transpose() * cen['mass']).sum(axis=1) / cen['mass'].sum()
+        vcen.units = cen['vel'].units
+
+        return vcen
+
+    def center(self, mode='ssc'):
+        '''
+        The position center of this snapshot
+        Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#center
+
+        The centering scheme is determined by the ``mode`` keyword. As well as the
+        The following centring modes are available:
+
+        *  *pot*: potential minimum
+
+        *  *com*: center of mass
+
+        *  *ssc*: shrink sphere center
+
+        *  *hyb*: for most halos, returns the same as ssc,
+                but works faster by starting iteration near potential minimum
+
+        Before the main centring routine is called, the snapshot is translated so that the
+        halo is already near the origin. The box is then wrapped so that halos on the edge
+        of the box are handled correctly.
+        '''
+        if self.__check_paticles():
+            print('No particles loaded in this Halo')
+            return
+        if mode == 'pot':
+            #   if 'phi' not in self.keys():
+            #      phi=self['phi']
+            i = self["phi"].argmin()
+            return self["pos"][i].copy()
+        if mode == 'com':
+            return self.mean_by_mass('pos')
+        if mode == 'ssc':
+            from pynbody.analysis.halo import shrink_sphere_center
+
+            return shrink_sphere_center(self)
+        if mode == 'hyb':
+            #    if 'phi' not in self.keys():
+            #       phi=self['phi']
+            from pynbody.analysis.halo import hybrid_center
+
+            return hybrid_center(self)
+        print('No such mode')
+
+        return
+
+    def ang_mom_vec(self, alignwith: str = 'all', rmax=None, **kwargs):
+
+        filtbyr = self._sele_family(alignwith, rmax=rmax, **kwargs)
+        angmom = ang_mom(filtbyr)
+        return angmom
+
+    def face_on(self, **kwargs):
+        """
+        Transforms the halo's coordinate system to a 'face-on' view.
+
+        This method aligns the halo such that the selected component's angular momentum
+        is aligned with the z-axis. It optionally shifts the halo to the center of the coordinate system.
+
+        Parameters:
+        -----------
+        mode : str, optional
+            Determines how to center the halo. Default is 'ssc'. Other options might include 'virial' or 'custom'.
+        alignwith : str, optional
+            Specifies which component to use for alignment. Options include:
+            - 'all' or 'total': Uses the combined angular momentum of all components.
+            - 'dm', 'darkmatter': Uses the angular momentum of dark matter.
+            - 'star', 's': Uses the angular momentum of stars.
+            - 'gas', 'g': Uses the angular momentum of gas.
+            - 'baryon', 'baryonic': Uses the combined angular momentum of stars and gas.
+        shift : bool, optional
+            If True, shifts the halo to its center of mass and adjusts the coordinate system. Default is True.
+        """
+    
+        mode = kwargs.get('mode', 'ssc')
+        shift = kwargs.get('shift', True)
+        alignmode = kwargs.get('alignmode', 'jz')
+
+        self.check_boundary()
+        pos_center = self.center(mode=mode)
+        vel_center = self.vel_center(mode=mode)
+
+        self.shift(pos=pos_center, vel=vel_center)
+        if alignmode == 'jz':
+            angmom = self.ang_mom_vec( **kwargs)
+            trans = calc_faceon_matrix(angmom)
+        elif alignmode == 'krot':
+            resul = self.krot(calmode = 'max', **kwargs)
+            if resul:
+                trans = resul['krotmat']
+            else:
+                return
         else:
-            for i in f2.g:
-                f3.g[i] = SimArray(np.append(f1.g[i], f2.g[i], axis=0), f2.g[i].units)
-
-    if len(f3.bh) > 0:
-        if len(f1.bh) == 0:
-            for i in f2.bh:
-                f3.bh[i] = f2.bh[i]
-        elif len(f2.bh) == 0:
-            for i in f1.bh:
-                f3.bh[i] = f1.bh[i]
+            print('No such alignmode')
+            return
+        
+        if shift:
+            phimax = None
+            if 'phi' in self:
+                R200 = self.R_vir(cen=pos_center, overden=200)
+                phimax = self[
+                    filt.Annulus(
+                        r1=R200,
+                        r2=self.R_vir(),
+                        cen=pos_center,
+                    )
+                ]['phi'].mean()
+            self.shift(phi=phimax)
+            self._transform(trans)
         else:
-            for i in f2.bh:
-                f3.bh[i] = SimArray(
-                    np.append(f1.bh[i], f2.bh[i], axis=0), f2.bh[i].units
-                )
+            self.shift(pos=-pos_center, vel=-vel_center)
+            self._transform(trans)
 
-    return f3
+    def R_vir(self, overden: float = 178, cen=None, rho_def='critical') -> SimArray:
+        """
+        the virial radius of the halo.
 
+        Parameters:
+        -----------
+        overden : float, default is 178
+            The overdensity criterion.
+        cen : array-like, default is the cen derived from self.center(mode='ssc')
+            The center position to use.
+        """
+        from pynbody.analysis.halo import virial_radius
+        
+        if isinstance(cen, type(None)):
+            cen = self.center(mode='ssc')
+        R = virial_radius(self, cen=cen, overden=overden, rho_def=rho_def)
+        return R
 
-def get_parttype(particle_field):
-    particle_typeload = ''
+    def krot(self, rmax: float = None, calfor: str = 'star', **kwargs) -> np.ndarray:
 
-    if ('dm' in particle_field) or ('darkmatter' in particle_field):
-        if len(particle_typeload) > 0:
-            particle_typeload += ',dm'
+        filtbyr = self._sele_family(calfor, rmax=rmax, **kwargs)
+
+        calmode = kwargs.get('calmode', 'now')
+
+        if calmode == 'now':
+            return np.array(
+                np.sum((0.5 * filtbyr['mass'] * (filtbyr['vcxy'] ** 2)))
+                / np.sum(filtbyr['mass'] * filtbyr['ke'])
+            )
+        if calmode == 'max':
+            fitmethod = kwargs.get('fitmethod', 'BFGS')
+            result = fit_krotmax(
+                filtbyr['pos'].view(np.ndarray),
+                filtbyr['vel'].view(np.ndarray),
+                filtbyr['mass'].view(np.ndarray),
+                method=fitmethod,
+            )
+            return result
+        print('No such calmode')
+        return
+
+    def sfh(self, **kwargs) -> dict:
+        nbins = kwargs.get('nbins', 200)
+        massmode = kwargs.get('massmode', 'now')
+        if massmode == 'now':
+            weight = self.s['mass']
+        elif massmode == 'birth':
+            weight = self.s['GFM_InitialMass']
         else:
-            particle_typeload += 'dm'
-
-    if (
-        ('star' in particle_field)
-        or ('stars' in particle_field)
-        or ('stellar' in particle_field)
-    ):
-        if len(particle_typeload) > 0:
-            particle_typeload += ',star'
-        else:
-            particle_typeload += 'star'
-
-    if (
-        ('gas' in particle_field)
-        or ('g' in particle_field)
-        or ('cells' in particle_field)
-    ):
-        if len(particle_typeload) > 0:
-            particle_typeload += ',gas'
-        else:
-            particle_typeload += 'gas'
-
-    if (
-        ('bh' in particle_field)
-        or ('bhs' in particle_field)
-        or ('blackhole' in particle_field)
-        or ('blackholes' in particle_field)
-    ):
-        if len(particle_typeload) > 0:
-            particle_typeload += ',bh'
-        else:
-            particle_typeload += 'bh'
-    return particle_typeload
-
-
-def get_Snapshot_property(BasePath: str, Snap: int) -> simdict.SimDict:
-    """
-    Retrieves properties of a specific snapshot.
-
-    Parameters:
-    -----------
-    BasePath : str
-        The base path to the directory containing snapshot files.
-    Snap : int
-        The identifier of the snapshot to be loaded.
-
-    Returns:
-    --------
-    Snapshot : simdict.SimDict
-        A SimDict object containing the properties of the specified snapshot.
-    """
-    SnapshotHeader = loadHeader(BasePath, Snap)
-    Snapshot = simdict.SimDict()
-    Snapshot['filepath'] = BasePath
-    Snapshot['read_Snap_properties'] = SnapshotHeader
-    Snapshot['Snapshot'] = Snap
-    return Snapshot
-
-
-def get_eps_Mdm(Snapshot):
-    """
-    Retrieves the gravitational softenings for stars and dark matter (DM) based on the simulation run and redshift.
-
-    Parameters:
-    -----------
-    Snapshot : object
-        An object containing snapshot properties, including `z` (redshift) and `run` (simulation run).
-
-    Returns:
-    --------
-    eps_star : SimArray
-        The gravitational softening length for stars.
-    eps_dm : SimArray
-        The gravitational softening length for dark matter.
-
-    Notes:
-    ------
-    'Gravitational softenings for stars and DM are in comoving kpc until z=1,
-    after which they are fixed to their z=1 values.' -- Dylan Nelson.
-    Data is sourced from https://www.tng-project.org/data/docs/background/.
-    """
-    MatchRun = {
-        'TNG50-1': [0.39, 3.1e5 / 1e10],
-        'TNG50-2': [0.78, 2.5e6 / 1e10],
-        'TNG50-3': [1.56, 2e7 / 1e10],
-        'TNG50-4': [3.12, 1.6e8 / 1e10],
-        'TNG100-1': [1, 5.1e6 / 1e10],
-        'TNG100-2': [2, 4e7 / 1e10],
-        'TNG100-3': [4, 3.2e8 / 1e10],
-        'TNG300-1': [2, 4e7 / 1e10],
-        'TNG300-1': [4, 3.2e8 / 1e10],
-        'TNG300-1': [8, 2.5e9 / 1e10],
-    }
-
-    if Snapshot.properties['z'] > 1:
-        return SimArray(
-            MatchRun[Snapshot.properties['run']][0], units.a * units.kpc / units.h
-        ), SimArray(
-            MatchRun[Snapshot.properties['run']][1], 1e10 * units.Msol / units.h
+            print('No such massmode')
+            return
+        mass_h, evo_t = np.histogram(
+            self.s['tform'],
+            bins=np.linspace(
+                self.s['tform'].min().in_units('Gyr'), self.t.in_units('Gyr'), nbins
+            ),
+            weights=weight,
         )
-    else:
-        return SimArray(
-            MatchRun[Snapshot.properties['run']][0] / 2, units.kpc / units.h
-        ), SimArray(
-            MatchRun[Snapshot.properties['run']][1], 1e10 * units.Msol / units.h
+        mass_h = SimArray(mass_h, weight.units)
+        evo_t = SimArray(evo_t, units.Gyr)
+        t_inter = np.diff(evo_t)
+
+        SFR = (mass_h / (t_inter)).in_units('Msol yr**-1')
+        mass_cumsum = mass_h.cumsum()
+
+        result = {
+            't': evo_t[1:],
+            'sfr': SFR,
+            'mass': mass_cumsum,
+        }
+        return result
+
+    def star_t(self, tmax: float, **kwargs):
+        if tmax > self.t.in_units('Gyr'):
+            print('tmax should be less than', self.t.in_units('Gyr'))
+            return
+        tmin = kwargs.get('tmin', 0)
+        if tmin > tmax:
+            print('tmin should be smaller than tmax. 0 is recommended')
+            return
+        massmode = kwargs.get('massmode', 'now')
+        
+        if massmode == 'now':
+            return self.s['mass'][
+            (self.s['tform'].in_units('Gyr') < tmax)
+            & (self.s['tform'].in_units('Gyr') > tmin)
+        ].sum()
+        elif massmode == 'birth':
+            return self.s['GFM_InitialMass'][
+            (self.s['tform'].in_units('Gyr') < tmax)
+            & (self.s['tform'].in_units('Gyr') > tmin)
+        ].sum()
+        else:
+            print('No such massmode')
+            return
+
+    def t_star(self, frac: float = 0.5, **kwargs):
+        if (frac > 1) or (frac <= 0):
+            print('frac should range from 0-1')
+            return
+        massmode = kwargs.get('massmode', 'now')
+        tform_sort = self.s['tform'][self.s['tform'].argsort()].in_units('Gyr')
+        if massmode == 'now':
+            mass_sort = self.s['mass'][self.s['tform'].argsort()]
+
+        elif massmode == 'birth':
+            mass_sort = self.s['GFM_InitialMass'][self.s['tform'].argsort()]
+        else:
+            print('No such massmode')
+            return
+        masscrit = frac * mass_sort[tform_sort < self.t.in_units('Gyr')].sum()
+        mass_cumsum = mass_sort.cumsum()
+        return (
+            tform_sort[mass_cumsum > masscrit].min()
+            + tform_sort[mass_cumsum < masscrit].max()
+        ) / 2
+
+    def R(self, frac: float = 0.5, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
+
+        return self.__call_r('rxy', frac, calfor, calpa, **kwargs)
+
+    def r(self, frac: float = 0.5, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
+
+        return self.__call_r('r', frac, calfor, calpa, **kwargs)
+    
+    def rho(self, rmax: float, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
+        
+        rmin = kwargs.get('rmin', None)
+        filtbyr = self._sele_family(calfor, rmax=rmax, rmin=rmin)
+        pasum = np.array(filtbyr[calpa].sum())
+        pavolume = 4/3*np.pi*(rmax**3 - rmin**3) if rmin else 4/3*np.pi*rmax**3
+        
+        return SimArray(pasum/pavolume, filtbyr[calpa].units/filtbyr['r'].units**3)
+    
+    def Sigma(self, Rmax: float, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
+        
+        Rmin = kwargs.get('Rmin', None)
+        zmax = kwargs.get('zmax', None)
+        filtbyr = self._sele_family(calfor, Rmax=Rmax, Rmin=Rmin, zmax=zmax)
+        pasum = np.array(filtbyr[calpa].sum())
+        paarea = np.pi*(Rmax**2 - Rmin**2) if Rmin else np.pi*Rmax**2
+        
+        return SimArray(pasum/paarea, filtbyr[calpa].units/filtbyr['rxy'].units**2)
+    
+    def check_boundary(self):
+        """
+        Check if any particle lay on the edge of the box.
+        """
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.check_boundary()
+            return
+        if (self['x'].max() - self['x'].min()) > (self.boxsize / 2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+        if (self['y'].max() - self['y'].min()) > (self.boxsize / 2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+        if (self['z'].max() - self['z'].min()) > (self.boxsize / 2):
+            print('On the edge of the box, move to center')
+            self.wrap()
+            return
+        return
+
+    def shift(self, pos: SimArray = None, vel: SimArray = None, phi: SimArray = None):
+        '''
+        shift to the specific position
+        then set its pos, vel, phi, acc to 0.
+        '''
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.shift(pos, vel, phi)
+        else:
+            if pos is not None:
+                self['pos'] -= pos
+            if vel is not None:
+                self['vel'] -= vel
+            if (phi is not None) and ('phi' in self):
+                self['phi'] -= phi
+
+    def _sele_family(self, family, **kwargs):
+        rmax = kwargs.get('rmax', None)
+        rmin = kwargs.get('rmin', None)
+        Rmax = kwargs.get('Rmax', None)
+        Rmin = kwargs.get('Rmin', None)
+        zmax = kwargs.get('zmax', None)
+        
+        if set(['star', 's']) & set([family.lower()]):
+            selfam = self.s
+        elif set(['gas', 'g']) & set([family.lower()]):
+            selfam = self.g
+        elif set(['dm', 'darkmatter']) & set([family.lower()]):
+            selfam = self.dm
+        elif set(['total', 'all']) & set([family.lower()]):
+            selfam = self
+        elif set(['baryon']) & set([family.lower()]):
+            slice1 = self._get_family_slice(get_family('s'))
+            slice2 = self._get_family_slice(get_family('g'))
+            selfam = self[
+                np.append(
+                    np.arange(len(self))[slice1], np.arange(len(self))[slice2]
+                ).astype(np.int64)
+            ]
+        else:
+            print('calfor wrong !!!')
+            return
+        if rmax:
+            selfam = selfam[filt.LowPass('r', rmax)]
+        if rmin:
+            selfam = selfam[filt.HighPass('r', rmin)]
+        if Rmax:
+            selfam = selfam[filt.LowPass('rxy', Rmax)]
+        if Rmin:
+            selfam = selfam[filt.HighPass('rxy', Rmin)]
+        if zmax:
+            selfam = selfam[filt.BandPass('z', -zmax, zmax)]
+
+        return selfam
+
+    @property
+    def _filename(self):
+        if self._descriptor in self.base._filename:
+            return self.base._filename
+        else:
+            return self.base._filename + ":" + self._descriptor
+        
+    @property
+    def Re(self):
+        return self.R()
+
+    @property
+    def re(self):
+        return self.r()
+
+    def wrap(self, boxsize=None, convention='center'):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.wrap(boxsize, convention)
+        else:
+            super().wrap(boxsize, convention)
+
+    def rotate_x(self, angle):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.rotate_x(angle)
+        else:
+            super().rotate_x(angle)
+
+    def rotate_y(self, angle):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.rotate_y(angle)
+        else:
+            super().rotate_y(angle)
+
+    def rotate_z(self, angle):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor.rotate_z(angle)
+        else:
+            super().rotate_z(angle)
+
+    def transform(self, matrix):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor._transform(matrix)
+        else:
+            super()._transform(matrix)
+            
+    def __call_r(
+        self, callkeys: str = 'r', frac: float = 0.5, calfor: str = 'star', calpa: str ='mass', **kwargs
+    ) -> SimArray:
+        '''
+        Sort particles by callkeys, and then cumsum calpa, 
+        return callkeys where the cumsum of calpa is equal to frac * the sum of calpa
+        '''
+        calfam = self._sele_family(calfor, **kwargs)
+
+        call_pa = calfam[calpa]
+        pacrit = frac * call_pa.sum()
+        callr = calfam[callkeys]
+        args = np.argsort(callr)
+        r_sort = callr[args]
+        pa_sort = call_pa[args]
+        pa_cumsum = pa_sort.cumsum()
+        Rcall = (
+            r_sort[pa_cumsum > pacrit].min() + r_sort[pa_cumsum < pacrit].max()
+        ) / 2
+
+        return Rcall
+
+    def __getattr__(self, name):
+        try:
+            return super().__getattr__(name)
+        except:
+            pass
+
+        try:
+            return self.properties[name]
+        except:
+            pass
+
+        if name in self.GC:
+            return self.GC[name]
+
+        raise AttributeError(
+            "%r object has no attribute %r" % (type(self).__name__, name)
         )
+
+    def __check_paticles(self):
+        if len(self) > 0:
+            return False
+        else:
+            return True
+
+    def _transform(self, matrix):
+        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+            self.ancestor._transform(matrix)
+        else:
+            super()._transform(matrix)
+
 
 
 # some deride_property
+
+# all
+@derived_array
+def jy(sim):
+    """y-component of the angular momentum"""
+    return sim['j'][:,1]
+
+# all
+@derived_array
+def jx(sim):
+    """x-component of the angular momentum"""
+    return sim['j'][:,0]
+
+# all
+@derived_array
+def jc(sim):
+    '''the maximum angular momentum'''
+    return sim['j2']**(1,2)
+
+# all
+@derived_array
+def circularity(sim):
+    '''the circularity parameter'''
+    return sim['jz']/sim['jc']
+
+# all
+@derived_array
+def be(sim):
+    '''binding energy normalized by the minimum value '''
+    return sim['phi']/sim['phi'].abs().max()
 
 
 # all
@@ -382,7 +759,6 @@ def tform(
     t[t == 0] = 14.0
     return t
 
-
 # star
 @derived_array
 def age(sim):
@@ -397,7 +773,6 @@ def age(sim):
     ag = sim.properties['t'] - sim['tform']
     ag.convert_units('Gyr')
     return ag
-
 
 # star
 @derived_array
@@ -417,7 +792,6 @@ def U_mag(sim):
 
     return sim['GFM_StellarPhotometrics'][:, 0]
 
-
 # star
 @derived_array
 def B_mag(sim):
@@ -426,7 +800,6 @@ def B_mag(sim):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 1]
-
 
 # star
 @derived_array
@@ -437,7 +810,6 @@ def V_mag(sim):
 
     return sim['GFM_StellarPhotometrics'][:, 2]
 
-
 # star
 @derived_array
 def K_mag(sim):
@@ -446,7 +818,6 @@ def K_mag(sim):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 3]
-
 
 # star
 @derived_array
@@ -457,7 +828,6 @@ def g_mag(sim):
 
     return sim['GFM_StellarPhotometrics'][:, 4]
 
-
 # star
 @derived_array
 def r_mag(sim):
@@ -466,7 +836,6 @@ def r_mag(sim):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 5]
-
 
 # star
 @derived_array
@@ -477,7 +846,6 @@ def i_mag(sim):
 
     return sim['GFM_StellarPhotometrics'][:, 6]
 
-
 # star
 @derived_array
 def z_mag(sim):
@@ -486,7 +854,6 @@ def z_mag(sim):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 7]
-
 
 # Refer mostly https://pynbody.readthedocs.io/latest/
 # gas
@@ -541,12 +908,6 @@ def em(sim):
     """
     Calculates the Emission Measure (n_e^2) per particle, which is used to be integrated along the line of sight (LoS).
 
-    Notes:
-    ------
-    The emission measure is calculated as the square of the electron number density (`ne`).
-    This value is used in astrophysical applications to estimate the emission from gas in a simulation,
-    often integrated along the line of sight.
-
     Formula:
     --------
     EM = n_e^2
@@ -569,12 +930,6 @@ def p(sim):
     where:
     - u is the internal energy per unit mass.
     - rho is the gas density in units of solar masses per cubic kiloparsec (Msol kpc^-3).
-
-    The result is converted to Pascals (Pa).
-
-    Formula:
-    --------
-    P = (2 / 3) * u * rho
     """
     p = sim["u"] * sim["rho"].in_units('Msol kpc^-3') * (2.0 / 3)
     p.convert_units("Pa")
@@ -594,12 +949,6 @@ def cs(sim):
     - k_B is the Boltzmann constant.
     - T is the gas temperature.
     - μ is the mean molecular weight.
-
-    The result is converted to kilometers per second (km/s).
-
-    Formula:
-    --------
-    c_s = sqrt( (5/3) * k * T / μ )
     """
     return (np.sqrt(5.0 / 3.0 * units.k * sim['temp'] / sim['mu'])).in_units('km s^-1')
 
@@ -609,19 +958,12 @@ def c_s(self):
     """
     Calculates the sound speed of the gas based on pressure and density.
 
-    Notes:
     ------
     The sound speed is calculated using the formula:
     c_s = sqrt( (5/3) * (p / rho) )
     where:
     - p is the gas pressure.
     - rho is the gas density.
-
-    The result is converted to kilometers per second (km/s).
-
-    Formula:
-    --------
-    c_s = sqrt( (5/3) * p / rho )
     """
     # x = np.sqrt(5./3.*units.k*self['temp']*self['mu'])
     x = np.sqrt(5.0 / 3.0 * self['p'] / self['rho'].in_units('Msol kpc^-3'))
@@ -636,7 +978,6 @@ def c_n_sq(sim):
     Calculates the turbulent amplitude C_N^2 for use in spectral calculations,
     As in Eqn 20 of Macquart & Koay 2013 (ApJ 776 2).
 
-    Notes:
     ------
     This calculation assumes a Kolmogorov spectrum of turbulence below the SPH resolution.
 
@@ -647,12 +988,6 @@ def c_n_sq(sim):
     - beta = 11/3
     - L_min = 0.1 Mpc (minimum scale of turbulence)
     - EM = emission measure
-
-    The result is returned in units of m^-20/3.
-
-    Formula:
-    --------
-    C_N^2 = ((β - 3) / (2 * (2 * π)^(4 - β))) * L_min^(3 - β) * EM
     """
 
     ## Spectrum of turbulence below the SPH resolution, assume Kolmogorov
@@ -667,16 +1002,11 @@ def c_n_sq(sim):
 
     return c_n_sq
 
-
 # gas
 @derived_array
 def Halpha(sim):
     """
     Compute the H-alpha intensity for each gas particle based on the emission measure.
-
-    The H-alpha emission is calculated using the following:
-    - **Emission Measure (EM)**: \( \text{EM} = n_e^2 \), where \( n_e \) is the electron number density.
-    - **H-alpha Intensity**: Computed using the Case B recombination coefficient and the emission measure.
 
     References:
     - Draine, B. T. (2011). "Physics of the Interstellar and Intergalactic Medium".
@@ -704,7 +1034,6 @@ def Halpha(sim):
         'erg cm^-3 s^-1 sr^-1'
     )  # Flux erg cm^-3 s^-1 sr^-1
 
-
 # gas
 @derived_array
 def nH(sim):
@@ -714,12 +1043,10 @@ def nH(sim):
     The hydrogen number density is computed using the following formula:
     - Total Hydrogen Number Density: X_H * (rho / m_p)
       where X_H is the hydrogen mass fraction, rho is the gas density, and m_p is the proton mass.
-
     """
     nh = sim['XH'] * (sim['rho'].in_units('g cm^-3') / units.m_p).in_units('cm^-3')
     nh.units = units.cm**-3
     return nh
-
 
 # gas
 @derived_array
@@ -747,10 +1074,6 @@ def mu(sim):
     The mean molecular weight is computed using the hydrogen mass fraction (XH) and the electron
     abundance. The formula used is:
         μ = 4 / (1 + 3 * XH + 4 * XH * ElectronAbundance)
-
-    Notes:
-    ------
-    - The 'ElectronAbundance' must be present in the simulation data to compute the mean molecular weight.
     """
     if 'ElectronAbundance' not in sim:
         print('need gas ElectronAbundance to cal: ElectronAbundance')
@@ -764,13 +1087,10 @@ def mu(sim):
     return muu.in_units('m_p')
 
 
-@simdict.SimDict.setter
+@SimDict.setter
 def read_Snap_properties(f, SnapshotHeader):
     """
     Set cosmological and simulation properties for a given snapshot.
-
-    This function initializes the simulation dictionary with various cosmological parameters and
-    snapshot-specific properties based on the provided SnapshotHeader.
 
     Parameters:
     -----------
@@ -789,43 +1109,26 @@ def read_Snap_properties(f, SnapshotHeader):
       - sigma8 (Amplitude of matter density fluctuations): 0.8159
       - ns (Spectral index of primordial fluctuations): 0.9667
       - h (Hubble parameter): 0.6774
-
-    Snapshot-Specific Properties:
-    ------------------------------
-    - 'a': Scale factor (time) of the snapshot.
-    - 'h': Hubble parameter.
-    - 'omegaM0': Matter density parameter.
-    - 'omegaL0': Dark energy density parameter.
-    - 'omegaB0': Baryon density parameter (fixed value).
-    - 'sigma8': Amplitude of matter density fluctuations (fixed value).
-    - 'ns': Spectral index (fixed value).
-    - 'boxsize': Size of the simulation box (in kpc), adjusted for the scale factor and Hubble parameter.
-    - 'Halos_total': Total number of halos in the snapshot.
-    - 'Subhalos_total': Total number of subhalos in the snapshot.
     """
 
-    f['a'] = SnapshotHeader['Time']
-    f['z'] = (1 / SnapshotHeader['Time']) - 1
-    f['h'] = SnapshotHeader['HubbleParam']
-    f['omegaM0'] = SnapshotHeader['Omega0']
-    f['omegaL0'] = SnapshotHeader['OmegaLambda']
-    f['omegaB0'] = 0.0486
-    f['sigma8'] = 0.8159
-    f['ns'] = 0.9667
-    f['boxsize'] = SimArray(
+    f['a'] = SnapshotHeader['Time']                 # Scale factor (time)
+    f['z'] = (1 / SnapshotHeader['Time']) - 1       # Redshift
+    f['h'] = SnapshotHeader['HubbleParam']          # Hubble parameter.
+    f['omegaM0'] = SnapshotHeader['Omega0']         # Matter density parameter.
+    f['omegaL0'] = SnapshotHeader['OmegaLambda']    # Dark energy density parameter.
+    f['omegaB0'] = 0.0486                           # Baryon density parameter (fixed value).
+    f['sigma8'] = 0.8159                            # Amplitude of matter density fluctuations (fixed value).
+    f['ns'] = 0.9667                                # Spectral index (fixed value).
+    f['boxsize'] = SimArray(                        # Size of the simulation box (in kpc)
         1.0, SnapshotHeader['BoxSize'] * units.kpc * units.a / units.h
     )
-    f['Halos_total'] = SnapshotHeader['Ngroups_Total']
-    f['Subhalos_total'] = SnapshotHeader['Nsubgroups_Total']
+    f['Halos_total'] = SnapshotHeader['Ngroups_Total']          # Total number of halos in the snapshot.
+    f['Subhalos_total'] = SnapshotHeader['Nsubgroups_Total']    # Total number of subhalos in the snapshot.
 
-
-@simdict.SimDict.setter
+@SimDict.setter
 def filepath(f, BasePath):
     """
     Set the file path for the simulation data.
-
-    This function updates the simulation dictionary with the base path of the data files and
-    determines the simulation run identifier based on the base path.
 
     Parameters:
     -----------
@@ -833,11 +1136,6 @@ def filepath(f, BasePath):
         The simulation dictionary to be updated.
     BasePath : str
         The base directory path where the simulation data files are located.
-
-    This function:
-    - Sets the 'filedir' key to the provided BasePath.
-    - Identifies the simulation run by checking which known run names are present in the BasePath.
-    - Updates the 'run' key in the simulation dictionary with the identified run name.
     """
     f['filedir'] = BasePath
     for i in illustrisTNGruns:
@@ -846,7 +1144,7 @@ def filepath(f, BasePath):
             break
 
 
-@simdict.SimDict.getter
+@SimDict.getter
 def t(d):
     """
     Calculate the age of the snapshot
@@ -863,7 +1161,7 @@ def t(d):
     return get_t(omega_m, redshift, H0_kmsMpc)
 
 
-@simdict.SimDict.getter
+@SimDict.getter
 def rho_crit(d):
     z = d['z']
     omM = d['omegaM0']
@@ -879,7 +1177,7 @@ def rho_crit(d):
     return rho_crit
 
 
-@simdict.SimDict.getter
+@SimDict.getter
 def tLB(d):
     """
     Calculate the lookback time.
@@ -894,7 +1192,7 @@ def tLB(d):
     return tlb
 
 
-@simdict.SimDict.getter
+@SimDict.getter
 def cosmology(d):
     cos = {}
     cos['h'] = d.get('h')
