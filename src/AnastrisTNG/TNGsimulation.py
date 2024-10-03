@@ -433,7 +433,7 @@ class Snapshot(SimSnap):
             print('New particles can not be loaded')
 
     def load_particle(
-        self, ID: int, groupType: str = 'Subhalo', decorate=True
+        self, ID: int, groupType: str = 'Subhalo', decorate=True, **kwargs
     ) -> SimSnap:
         '''
         ID: int, halo or subhalo id
@@ -450,12 +450,13 @@ class Snapshot(SimSnap):
             )
 
         lenType = subset['lenType']
+        order = kwargs.get('order', self.load_particle_para['particle_field'])
         f = new(
             dm=int(lenType[1]),
             star=int(lenType[4]),
             gas=int(lenType[0]),
             bh=int(lenType[5]),
-            order='dm,star,gas,bh',
+            order=order,
         )
 
         for party in self.load_particle_para['particle_field'].split(","):

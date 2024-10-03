@@ -256,41 +256,37 @@ class Basehalo(SubSnap):
         mode = kwargs.get('mode', 'ssc')
         shift = kwargs.get('shift', True)
         alignmode = kwargs.get('alignmode', 'jz')
+        retmatrix = kwargs.get('retmatrix',False)
 
         self.check_boundary()
         pos_center = self.center(mode=mode)
         vel_center = self.vel_center(mode=mode)
 
-        self.shift(pos=pos_center, vel=vel_center)
         if alignmode == 'jz':
+            self.shift(pos=pos_center, vel=vel_center)
             angmom = self.ang_mom_vec( **kwargs)
             trans = calc_faceon_matrix(angmom)
         elif alignmode == 'krot':
+            self.shift(pos=pos_center, vel=vel_center)
             resul = self.krot(calmode = 'max', **kwargs)
             if resul:
                 trans = resul['krotmat']
             else:
+                self.shift(pos=-pos_center, vel=-vel_center)
                 return
         else:
             print('No such alignmode')
             return
         
         if shift:
-            phimax = None
-            if 'phi' in self:
-                R200 = self.R_vir(cen=pos_center, overden=200)
-                phimax = self[
-                    filt.Annulus(
-                        r1=R200,
-                        r2=self.R_vir(),
-                        cen=pos_center,
-                    )
-                ]['phi'].mean()
-            self.shift(phi=phimax)
             self._transform(trans)
         else:
             self.shift(pos=-pos_center, vel=-vel_center)
             self._transform(trans)
+        if retmatrix:
+            return trans
+        else:
+            return
 
     def R_vir(self, overden: float = 178, cen=None, rho_def='critical') -> SimArray:
         """

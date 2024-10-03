@@ -1,6 +1,6 @@
 '''
 Some useful functions
-orbit: fit the orbit, based on the observed pos,vel,t
+Orbit: fit the orbit, based on the observed pos,vel,t
 ang_mom: vector
 angle_between_vectors:
 fit_krotmax:
@@ -13,7 +13,7 @@ from scipy.optimize import minimize
 from pynbody.analysis.angmom import calc_faceon_matrix
 
 
-class orbit:
+class Orbit:
     def __init__(self, pos, vel, t):
         '''
         input:

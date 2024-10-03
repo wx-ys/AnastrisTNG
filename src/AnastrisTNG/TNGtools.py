@@ -18,7 +18,7 @@ from pynbody.array import SimArray
 from pynbody.analysis.profile import Profile as _Profile
 
 from AnastrisTNG.illustris_python.snapshot import *
-from AnastrisTNG.Anatools import orbit
+from AnastrisTNG.Anatools import Orbit
 from AnastrisTNG.pytreegrav import PotentialTarget, AccelTarget
 
 
@@ -358,43 +358,41 @@ class Profile_1D:
             for i in range(len(w))
         ]
 
-
-class Star_birth:
+from AnastrisTNG.TNGsnapshot import Basehalo
+class Star_birth(Basehalo):
     '''the pos when the star form according to the host galaxy position'''
     
     #TODO face on matrix; on the edge of boxsize
 
-    def __init__(self, Snap, subID):
+    def __init__(self, Snap, subID, usebirthvel = True, usebirthmass = True):
         '''
         input:
         Snap,
         subID,
         '''
 
-        if (
-            'BirthPos' not in Snap.load_particle_para['star_fields']
-            or 'GFM_StellarFormationTime' not in Snap.load_particle_para['star_fields']
-        ):
-            print(
-                'Snap need BirthPos and GFM_StellarFormationTime in load_particle_para'
-            )
-            return
-
-        PT = Snap.load_particle(subID)
-        self.s = PT.s
+        originfield = Snap.load_particle_para['star_fields'].copy()
+        Snap.load_particle_para['star_fields'] = ['Coordinates', 'Velocities', 'Masses', 'ParticleIDs',
+                                                  'GFM_StellarFormationTime', 'GFM_InitialMass', 'BirthPos', 'BirthVel']
+        PT = Snap.load_particle(subID, decorate = False, order = 'star',)
+        Basehalo.__init__(self, PT)
 
         evo = Snap.galaxy_evolution(
             subID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin'], physical_units=False
         )
-        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / 0.6774
+        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / self.h
 
         vel_ckpcGyr = (
             evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']
         ).T
         time_Gyr = evo['t'].in_units('Gyr')
-        self.orbit = orbit(pos_ckpc, vel_ckpcGyr, time_Gyr)
+        self.orbit = Orbit(pos_ckpc, vel_ckpcGyr, time_Gyr)
         self.s['BirthPos'].convert_units('a kpc')
+        
         Birthpos = self.s['BirthPos'][
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ]
+        Birthvel = self.s['BirthVel'][
             (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
         ]
         Birtha = self.s['aform'][
@@ -404,14 +402,49 @@ class Star_birth:
         galapos = pos[
             (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
         ]
-        distance = galapos - Birthpos
+        galavel = vel[
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+        ]
+        
+        distance = Birthpos - galapos
+        
+        # deal with periodic boundary
+        boxsize = Snap.boxsize.in_units('a kpc').view(np.ndarray)
+        
+        distance[distance < -boxsize/2] = distance[distance < -boxsize/2] +boxsize
+        distance[distance > boxsize/2] = distance[distance > boxsize/2] -boxsize
+        
         distance_in_kpc = (distance.T * Birtha).T
+        colVel = (Birthvel.in_units('kpc Gyr**-1 a**1/2').view(np.ndarray).T * np.sqrt(Birtha)).T - (galavel.T * Birtha).T   # unit: kpc / Gyr
+        
+        
+        
+        self.s['pos'].convert_units('a kpc')
+        self.s['pos'] = self.s['pos'] - self.orbit.get(t=self.orbit.tmax)[0]
         self.s['pos'].convert_units('kpc')
-        self.s['mass'].convert_units('Msol')
+        
+        self.s['vel'].convert_units('a kpc Gyr**-1')
+        self.s['vel'] = self.s['vel'] - self.orbit.get(t=self.orbit.tmax)[1]
+        self.s['vel'].convert_units('km s**-1')
+        
+        
         self.s['pos'][
             (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
         ] = distance_in_kpc
-
+        
+        if usebirthvel:
+            self.s['vel'].convert_units('kpc Gyr**-1')
+            self.s['vel'][
+            (self.s['tform'] > self.orbit.tmin) & (self.s['tform'] < self.orbit.tmax)
+            ] = colVel
+            self.s['vel'].convert_units('km s**-1')
+        if usebirthmass:
+            self.s['mass'] = self.s['GFM_InitialMass']   
+        self.s['mass'].convert_units('Msol')
+        Snap.load_particle_para['star_fields'] = originfield            #recover
+        
+    def wrap(self):
+        pass
 
 def _process_file(file_info):
     """
