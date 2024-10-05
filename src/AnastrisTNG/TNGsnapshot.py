@@ -18,6 +18,7 @@ from AnastrisTNG.TNGunits import illustrisTNGruns, NotneedtransGCPa
 from AnastrisTNG.pytreegrav import Potential, Accel
 from AnastrisTNG.Anatools import ang_mom, fit_krotmax, MoI_shape
 
+
 class Basehalo(SubSnap):
     """
     Represents a single halo in the simulation.
@@ -382,7 +383,11 @@ class Basehalo(SubSnap):
             'mass': mass_cumsum,
         }
         return result
-
+    '''
+    def profile(self, ndim: int = 2, type: str = 'lin', nbins: int = 100, rmin: float = 0.1, rmax: float = 100, **kwargs):
+        return
+        #return Profile_1D(self, ndim, type, nbins, rmin, rmax, **kwargs)
+    '''
     def star_t(self, tmax: float, **kwargs):
         if tmax > self.t.in_units('Gyr'):
             print('tmax should be less than', self.t.in_units('Gyr'))

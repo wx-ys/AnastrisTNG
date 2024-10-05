@@ -9,13 +9,15 @@ galaxy profile: Profile_1D(). Class.
 
 from typing import List
 import multiprocessing as mp
+import re
+import math
 
 import numpy as np
 import h5py
 from tqdm import tqdm
-from pynbody import units
+from pynbody import units, filt
 from pynbody.array import SimArray
-from pynbody.analysis.profile import Profile as _Profile
+from pynbody.analysis.profile import Profile 
 
 from AnastrisTNG.illustris_python.snapshot import *
 from AnastrisTNG.Anatools import Orbit
@@ -90,10 +92,241 @@ def cal_acceleration(sim, targetpos):
     acc.sim = sim
     return acc
 
+class profile(Profile):
+    
+    def _calculate_x(self, sim):
+        if self.zmax:
+            return SimArray(np.abs(sim['z']), sim['z'].units)
+        else:
+            return ((sim['pos'][:, 0:self.ndim] ** 2).sum(axis=1)) ** (1, 2)
+    
+    def __init__(self, sim, rmin = 0.1, rmax = 30, 
+                 nbins=100, ndim=2, type='lin', weight_by='mass', calc_x=None, **kwargs):
+        
+        zmax = kwargs.get('zmax', None)
+        self.zmax = zmax
+        if isinstance(zmax, str):
+            zmax = units.Unit(zmax)
+        
+        if self.zmax:
+            if isinstance(rmin, str):
+                rmin = units.Unit(rmin)
+            if isinstance(rmax, str):
+                rmax = units.Unit(rmax)
+            self.rmin = rmin
+            self.rmax = rmax
 
+            assert ndim in [2, 3]
+            if ndim == 3:
+                sub_sim = sim[
+                    filt.Disc(rmax, zmax) & ~filt.Disc(rmin, zmax)]
+            else:
+                sub_sim = sim[(filt.BandPass('x', rmin, rmax) |
+                            filt.BandPass('x', -rmax, -rmin)) &
+                            filt.BandPass('z', -zmax, zmax)]
+
+            Profile.__init__(
+                self, sub_sim, nbins=nbins, weight_by=weight_by, 
+                ndim=ndim, type=type, **kwargs)
+        else:
+            Profile.__init__(
+                self, sim, rmin=rmin, rmax=rmax, nbins=nbins, weight_by=weight_by, 
+                ndim=ndim, type=type, **kwargs)
+    
+        
+    def _setup_bins(self):
+        Profile._setup_bins(self)
+        if self.zmax:
+            dr = self.rmax - self.rmin
+
+            if self.ndim == 2:
+                self._binsize = (
+                    self['bin_edges'][1:] - self['bin_edges'][:-1]) * dr
+            else:
+                area = SimArray(
+                    np.pi * (self.rmax ** 2 - self.rmin ** 2), "kpc^2")
+                self._binsize = (
+                    self['bin_edges'][1:] - self['bin_edges'][:-1]) * area
+    def _get_profile(self, name):
+        """Return the profile of a given kind"""
+        x = name.split(",")
+        find = re.search(r'_\d+',name)
+        if name in self._profiles:
+            return self._profiles[name]
+
+        elif x[0] in Profile._profile_registry:
+            args = x[1:]
+            self._profiles[name] = Profile._profile_registry[x[0]](self, *args)
+            try:
+                self._profiles[name].sim = self.sim
+            except AttributeError:
+                pass
+            return self._profiles[name]
+
+        elif name in list(self.sim.keys()) or name in self.sim.all_keys():
+            self._profiles[name] = self._auto_profile(name)
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
+
+        elif name[-5:] == "_disp" and (name[:-5] in list(self.sim.keys()) or name[:-5] in self.sim.all_keys()):
+            self._profiles[name] = self._auto_profile(
+                name[:-5], dispersion=True)
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
+
+        elif name[-4:] == "_rms" and (name[:-4] in list(self.sim.keys()) or name[:-4] in self.sim.all_keys()):
+            self._profiles[name] = self._auto_profile(name[:-4], rms=True)
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
+
+        elif name[-4:] == "_med" and (name[:-4] in list(self.sim.keys()) or name[:-4] in self.sim.all_keys()):
+            self._profiles[name] = self._auto_profile(name[:-4], median=True)
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
+
+        elif name[0:2] == "d_" and (name[2:] in list(self.keys()) or name[2:] in self.derivable_keys() or name[2:] in self.sim.all_keys()):
+            #            if np.diff(self['dr']).all() < 1e-13 :
+            self._profiles[name] = np.gradient(self[name[2:]], self['dr'][0])
+            self._profiles[name] = self._profiles[name] / self['dr'].units
+            return self._profiles[name]
+            # else :
+            #    raise RuntimeError, "Derivatives only possible for profiles of fixed bin width."
+        elif find and (name[:find.start()] in list(self.sim.keys()) or name[:find.start()] in self.sim.all_keys()):
+            self._profiles[name] = self._auto_profile(name[:find.start()], q = float(name[find.start()+1:]))
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
+            
+        else:
+            raise KeyError(name + " is not a valid profile")
+
+    def _auto_profile(self, name, dispersion=False, rms=False, median=False, q=None ):
+        result = np.zeros(self.nbins)
+
+        # force derivation of array if necessary:
+        self.sim[name]
+
+        for i in range(self.nbins):
+            subs = self.sim[self.binind[i]]
+            name_array = subs[name].view(np.ndarray)
+            mass_array = subs[self._weight_by].view(np.ndarray)
+
+            if dispersion:
+                sq_mean = (name_array ** 2 * mass_array).sum() / \
+                    self['weight_fn'][i]
+                mean_sq = (
+                    (name_array * mass_array).sum() / self['weight_fn'][i]) ** 2
+                try:
+                    result[i] = math.sqrt(sq_mean - mean_sq)
+                except ValueError:
+                    # sq_mean<mean_sq occasionally from numerical roundoff
+                    result[i] = 0
+
+            elif rms:
+                result[i] = np.sqrt(
+                    (name_array ** 2 * mass_array).sum() / self['weight_fn'][i])
+            elif median:
+                if len(subs) == 0:
+                    result[i] = np.nan
+                else:
+                    sorted_name = sorted(name_array)
+                    result[i] = sorted_name[int(np.floor(0.5 * len(subs)))]
+            elif q:
+                if len(subs) == 0:
+                    result[i] = np.nan
+                else:
+                    sorted_name = sorted(name_array)
+                    result[i] = sorted_name[int(np.floor(q /100 * len(subs)))]
+            else:
+                result[i] = (name_array * mass_array).sum() / self['weight_fn'][i]
+
+        result = result.view(SimArray)
+        result.units = self.sim[name].units
+        result.sim = self.sim
+        return result
+    
+@Profile.profile_property
+def v_circ(p, grav_sim=None):
+    """Circular velocity, i.e. rotation curve. Calculated by computing the gravity
+    in the midplane - can be expensive"""
+    # print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
+    grav_sim = grav_sim or p.sim
+    cal_2 = np.sqrt(2) / 2
+    basearray = np.array(
+        [
+            (1, 0, 0),
+            (0, 1, 0),
+            (-1, 0, 0),
+            (0, -1, 0),
+            (cal_2, cal_2, 0),
+            (-cal_2, cal_2, 0),
+            (cal_2, -cal_2, 0),
+            (-cal_2, -cal_2, 0),
+        ]
+    )
+    R = p['rbins'].in_units('kpc').copy()
+    POS = np.array([(0, 0, 0)])
+    for j in R:
+        binsr = basearray * j
+        POS = np.concatenate((POS, binsr), axis=0)
+    POS = SimArray(POS, R.units)
+    ac = cal_acceleration(grav_sim, POS)
+    ac.convert_units('kpc Gyr**-2')
+    POS.convert_units('kpc')
+    velall = np.diag(np.dot(ac - ac[0], -POS.T))
+    if 'units' in dir(velall):
+        velall.units = units.kpc**2 / units.Gyr**2
+    else:
+        velall = SimArray(velall, units.kpc**2 / units.Gyr**2)
+    velTrue = np.zeros(len(R))
+    for i in range(len(R)):
+        velTrue[i] = np.mean(velall[i + 1 : 8 * (i + 1) + 1])
+    velTrue[velTrue < 0] = 0
+    velTrue = np.sqrt(velTrue)
+    velTrue = SimArray(velTrue, units.kpc / units.Gyr)
+    velTrue.convert_units('km s**-1')
+    velTrue.sim = grav_sim.ancestor
+    return velTrue
+@Profile.profile_property
+def pot(p, grav_sim=None):
+    grav_sim = grav_sim or p.sim
+    cal_2 = np.sqrt(2) / 2
+    basearray = np.array(
+        [
+            (1, 0, 0),
+            (0, 1, 0),
+            (-1, 0, 0),
+            (0, -1, 0),
+            (cal_2, cal_2, 0),
+            (-cal_2, cal_2, 0),
+            (cal_2, -cal_2, 0),
+            (-cal_2, -cal_2, 0),
+        ]
+    )
+    R = p['rbins'].in_units('kpc').copy()
+    POS = np.array([(0, 0, 0)])
+    for j in R:
+        binsr = basearray * j
+        POS = np.concatenate((POS, binsr), axis=0)
+    POS = SimArray(POS, R.units)
+    po = cal_potential(grav_sim, POS)
+    po.convert_units('km**2 s**-2')
+    poall = np.zeros(len(R))
+    for i in range(len(R)):
+        poall[i] = np.mean(po[i + 1 : 8 * (i + 1) + 1])
+
+    poall = SimArray(poall, po.units)
+    poall.sim = grav_sim.ancestor
+    return poall
+
+@Profile.profile_property
+def omega(p):
+    """Circular frequency Omega = v_circ/radius (see Binney & Tremaine Sect. 3.2)"""
+    prof = p['v_circ'] / p['rbins']
+    prof.convert_units('km s**-1 kpc**-1')
+    return prof
 class Profile_1D:
     def __init__(
-        self, sim, ndim=2, type='lin', nbins=100, rmin=0.1, rmax=100.0, **kwargs
+        self, sim, rmin=0.1, rmax=100.0, nbins=100, type='lin', zmax = 5., **kwargs
     ):
         """
         Initializes the profile object for different types of particles in the simulation.
@@ -112,6 +345,8 @@ class Profile_1D:
             The minimum radius for the profile (default is 0.1).
         rmax : float, optional
             The maximum radius for the profile (default is 100.0).
+        zmax : float, optional
+            maximum height to consider (default is 5.0).
         **kwargs : additional keyword arguments
             Additional parameters to pass to the Profile initialization.
         """
@@ -119,18 +354,27 @@ class Profile_1D:
             "Profile_1D -- assumes it's already at the center, and the disk is in the x-y plane"
         )
         print("If not, please use face_on()")
-        self.__Pall = _Profile(
-            sim, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
-        )
-        self.__Pstar = _Profile(
-            sim.s, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
-        )
-        self.__Pgas = _Profile(
-            sim.g, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
-        )
-        self.__Pdm = _Profile(
-            sim.dm, ndim=ndim, type=type, nbins=nbins, rmin=rmin, rmax=rmax, **kwargs
-        )
+        self.__P={'all':{}, 'star':{}, 'gas':{}, 'dm':{}}
+        self.__P['all']['r']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins,ndim=3, type=type, **kwargs)
+        self.__P['all']['R']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
+        self.__P['all']['Z']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
+        self.__P['all']['z']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+        
+        self.__P['star']['r']=profile(sim.s, rmin=rmin, rmax=rmax, nbins=nbins,ndim=3, type=type, **kwargs)
+        self.__P['star']['R']=profile(sim.s, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
+        self.__P['star']['Z']=profile(sim.s, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
+        self.__P['star']['z']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+        
+        self.__P['gas']['r']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins,ndim=3, type=type, **kwargs)
+        self.__P['gas']['R']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
+        self.__P['gas']['Z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
+        self.__P['gas']['z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+        
+        self.__P['dm']['r']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, **kwargs)
+        self.__P['dm']['R']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
+        self.__P['dm']['Z']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
+        self.__P['dm']['z']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+
 
         self.__properties = {}
         self.__properties['Qgas'] = self.Qgas
@@ -139,119 +383,40 @@ class Profile_1D:
         self.__properties['Q2thin'] = self.Q2thin
         self.__properties['Q2thick'] = self.Q2thick
 
-        def v_circ(p, grav_sim=None):
-            """Circular velocity, i.e. rotation curve. Calculated by computing the gravity
-            in the midplane - can be expensive"""
-            # print("Profile v_circ -- this routine assumes the disk is in the x-y plane")
-            grav_sim = grav_sim or p.sim
-            cal_2 = np.sqrt(2) / 2
-            basearray = np.array(
-                [
-                    (1, 0, 0),
-                    (0, 1, 0),
-                    (-1, 0, 0),
-                    (0, -1, 0),
-                    (cal_2, cal_2, 0),
-                    (-cal_2, cal_2, 0),
-                    (cal_2, -cal_2, 0),
-                    (-cal_2, -cal_2, 0),
-                ]
-            )
-            R = p['rbins'].in_units('kpc').copy()
-            POS = np.array([(0, 0, 0)])
-            for j in R:
-                binsr = basearray * j
-                POS = np.concatenate((POS, binsr), axis=0)
-            POS = SimArray(POS, R.units)
-            ac = cal_acceleration(grav_sim, POS)
-            ac.convert_units('kpc Gyr**-2')
-            POS.convert_units('kpc')
-            velall = np.diag(np.dot(ac - ac[0], -POS.T))
-            if 'units' in dir(velall):
-                velall.units = units.kpc**2 / units.Gyr**2
-            else:
-                velall = SimArray(velall, units.kpc**2 / units.Gyr**2)
-            velTrue = np.zeros(len(R))
-            for i in range(len(R)):
-                velTrue[i] = np.mean(velall[i + 1 : 8 * (i + 1) + 1])
-            velTrue[velTrue < 0] = 0
-            velTrue = np.sqrt(velTrue)
-            velTrue = SimArray(velTrue, units.kpc / units.Gyr)
-            velTrue.convert_units('km s**-1')
-            velTrue.sim = grav_sim.ancestor
-            return velTrue
-
-        def pot(p, grav_sim=None):
-            grav_sim = grav_sim or p.sim
-            cal_2 = np.sqrt(2) / 2
-            basearray = np.array(
-                [
-                    (1, 0, 0),
-                    (0, 1, 0),
-                    (-1, 0, 0),
-                    (0, -1, 0),
-                    (cal_2, cal_2, 0),
-                    (-cal_2, cal_2, 0),
-                    (cal_2, -cal_2, 0),
-                    (-cal_2, -cal_2, 0),
-                ]
-            )
-            R = p['rbins'].in_units('kpc').copy()
-            POS = np.array([(0, 0, 0)])
-            for j in R:
-                binsr = basearray * j
-                POS = np.concatenate((POS, binsr), axis=0)
-            POS = SimArray(POS, R.units)
-            po = cal_potential(grav_sim, POS)
-            po.conver_units('km**2 s**-2')
-            poall = np.zeros(len(R))
-            for i in range(len(R)):
-                poall[i] = np.mean(po[i + 1 : 8 * (i + 1) + 1])
-
-            poall = SimArray(poall, po.units)
-            poall.sim = grav_sim.ancestor
-            return poall
-
-        def omega(p):
-            """Circular frequency Omega = v_circ/radius (see Binney & Tremaine Sect. 3.2)"""
-            prof = p['v_circ'] / p['rbins']
-            prof.convert_units('km s**-1 kpc**-1')
-            return prof
-
-        self.__Pall._profile_registry[v_circ.__name__] = v_circ
-        self.__Pall._profile_registry[omega.__name__] = omega
-        self.__Pall._profile_registry[pot.__name__] = pot
-
-        self.__Pstar._profile_registry[v_circ.__name__] = v_circ
-        self.__Pstar._profile_registry[omega.__name__] = omega
-        self.__Pstar._profile_registry[pot.__name__] = pot
-
-        self.__Pgas._profile_registry[v_circ.__name__] = v_circ
-        self.__Pgas._profile_registry[omega.__name__] = omega
-        self.__Pgas._profile_registry[pot.__name__] = pot
-
-        self.__Pdm._profile_registry[v_circ.__name__] = v_circ
-        self.__Pdm._profile_registry[omega.__name__] = omega
-        self.__Pdm._profile_registry[pot.__name__] = pot
+    
+    def _util_fa(self, ks):
+        if set(['star', 's', 'Star']) & set(ks):
+            return 'star'
+        if set(['gas', 'g', 'Gas']) & set(ks):
+            return 'gas'
+        if set(['dm', 'DM']) & set(ks):
+            return 'dm'
+        if set(['all', 'ALL']) & set(ks):
+            return 'all'
+        return 'all'
+    
+    def _util_pr(self, ks):
+        if set(['r']) & set(ks):
+            return 'r'
+        if set(['z']) & set(ks):
+            return 'z'
+        if set(['R']) & set(ks):
+            return 'R'
+        if set(['Z']) & set(ks):
+            return 'Z'
+        return 'R'   
 
     def __getitem__(self, key):
 
         if isinstance(key, str):
             ks = key.split('-')
             if len(ks) > 1:
-                if set(['star', 's', 'Star']) & set(ks):
-                    return self.__Pstar[ks[0]]
-                if set(['gas', 'g', 'Gas']) & set(ks):
-                    return self.__Pgas[ks[0]]
-                if set(['dm', 'darkmatter', 'DM']) & set(ks):
-                    return self.__Pdm[ks[0]]
-                if set(['all', 'ALL']) & set(ks):
-                    return self.__Pall[ks[0]]
+                return self.__P[self._util_fa(ks)][self._util_pr(ks)][ks[0]]
             else:
                 if key in self.__properties:
                     return self.__properties[key]()
                 else:
-                    return self.__Pall[key]
+                    return self.__P['all']['R'][key]
         else:
             print('Type error, should input a str')
             return
@@ -261,9 +426,9 @@ class Profile_1D:
         Toomre-Q for gas
         '''
         return (
-            self.__Pall['kappa']
-            * self.__Pgas['vr_disp']
-            / (np.pi * self.__Pgas['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['gas']['R']['vr_disp']
+            / (np.pi * self.__P['gas']['R']['density'] * units.G)
         ).in_units("")
 
     def Qstar(self):
@@ -271,9 +436,9 @@ class Profile_1D:
         Toomre-Q parameter
         '''
         return (
-            self.__Pall['kappa']
-            * self.__Pstar['vr_disp']
-            / (3.36 * self.__Pstar['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['star']['R']['vr_disp']
+            / (3.36 * self.__P['star']['R']['density'] * units.G)
         ).in_units("")
 
     def Q2ws(self):
@@ -281,14 +446,14 @@ class Profile_1D:
         Toomre Q of two component. Wang & Silk (1994)
         '''
         Qs = (
-            self.__Pall['kappa']
-            * self.__Pstar['vr_disp']
-            / (np.pi * self.__Pstar['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['star']['R']['vr_disp']
+            / (np.pi * self.__P['star']['R']['density'] * units.G)
         ).in_units("")
         Qg = (
-            self.__Pall['kappa']
-            * self.__Pgas['vr_disp']
-            / (np.pi * self.__Pgas['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['gas']['R']['vr_disp']
+            / (np.pi * self.__P['gas']['R']['density'] * units.G)
         ).in_units("")
         return (Qs * Qg) / (Qs + Qg)
 
@@ -298,21 +463,20 @@ class Profile_1D:
         '''
         w = (
             2
-            * self.__Pstar['vr_disp']
-            * self.__Pgas['vr_disp']
-            / ((self.__Pstar['vr_disp']) ** 2 + self.__Pgas['vr_disp'] ** 2)
+            * self.__P['star']['R']['vr_disp']
+            * self.__P['gas']['R']['vr_disp']
+            / ((self.__P['star']['R']['vr_disp']) ** 2 + self.__P['gas']['R']['vr_disp'] ** 2)
         ).in_units("")
         Qs = (
-            self.__Pall['kappa']
-            * self.__Pstar['vr_disp']
-            / (np.pi * self.__Pstar['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['star']['R']['vr_disp']
+            / (np.pi * self.__P['star']['R']['density'] * units.G)
         ).in_units("")
         Qg = (
-            self.__Pall['kappa']
-            * self.__Pgas['vr_disp']
-            / (np.pi * self.__Pgas['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['gas']['R']['vr_disp']
+            / (np.pi * self.__P['gas']['R']['density'] * units.G)
         ).in_units("")
-
         q = [Qs * Qg / (Qs + w * Qg)]
         return [
             (
@@ -329,23 +493,23 @@ class Profile_1D:
         '''
         w = (
             2
-            * self.__Pstar['vr_disp']
-            * self.__Pgas['vr_disp']
-            / ((self.__Pstar['vr_disp']) ** 2 + self.__Pgas['vr_disp'] ** 2)
+            * self.__P['star']['R']['vr_disp']
+            * self.__P['gas']['R']['vr_disp']
+            / ((self.__P['star']['R']['vr_disp']) ** 2 + self.__P['gas']['R']['vr_disp'] ** 2)
         ).in_units("")
-        Ts = 0.8 + 0.7 * (self.__Pstar['vz_disp'] / self.__Pstar['vr_disp']).in_units(
+        Ts = 0.8 + 0.7 * (self.__P['star']['R']['vz_disp'] / self.__P['star']['R']['vr_disp']).in_units(
             ""
         )
-        Tg = 0.8 + 0.7 * (self.__Pgas['vz_disp'] / self.__Pgas['vr_disp']).in_units("")
+        Tg = 0.8 + 0.7 * (self.__P['gas']['R']['vz_disp'] / self.__P['gas']['R']['vr_disp']).in_units("")
         Qs = (
-            self.__Pall['kappa']
-            * self.__Pstar['vr_disp']
-            / (np.pi * self.__Pstar['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['star']['R']['vr_disp']
+            / (np.pi * self.__P['star']['R']['density'] * units.G)
         ).in_units("")
         Qg = (
-            self.__Pall['kappa']
-            * self.__Pgas['vr_disp']
-            / (np.pi * self.__Pgas['density'] * units.G)
+            self.__P['all']['R']['kappa']
+            * self.__P['gas']['R']['vr_disp']
+            / (np.pi * self.__P['gas']['R']['density'] * units.G)
         ).in_units("")
         Qs = Qs * Ts
         Qg = Qg * Tg
