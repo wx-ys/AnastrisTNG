@@ -212,3 +212,158 @@ def fit_krotmax(pos, vel, mass, method='BFGS'):
     else:
         print('Failed to fit maximum krot')
         return None
+
+# a modified version from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#shape
+def MoI_shape(sim, calpa: str = 'mass', nbins=1, rmin=None, rmax=None, bins='equal',
+          ndim=3, max_iterations=10, tol=1e-3, justify=False):
+    if (rmax == None): rmax = sim['r'].max()
+    if (rmin == None): rmin = rmax / 1E3
+    assert ndim in [2, 3]
+    assert max_iterations > 0
+    assert tol > 0
+    assert rmin >= 0
+    assert rmax > rmin
+    assert nbins > 0
+    if ndim == 2:
+        assert np.sum((sim['rxy'] >= rmin) & (sim['rxy'] < rmax)) > nbins * 2
+    elif ndim == 3:
+        assert np.sum((sim['r'] >= rmin) & (sim['r'] < rmax)) > nbins * 2
+    if bins not in ['equal', 'log', 'lin']: bins = 'equal'
+
+    # Handy 90 degree rotation matrices:
+    Rx = np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]])
+    Ry = np.array([[0, 0, 1], [0, 1, 0], [-1, 0, 0]])
+    Rz = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+
+    # -----------------------------FUNCTIONS-----------------------------
+    sn = lambda r, N: np.append([r[i * int(len(r) / N):(1 + i) * int(len(r) / N)][0] \
+                                 for i in range(N)], r[-1])
+
+    # General equation for an ellipse/ellipsoid:
+    def Ellipsoid(pos, a, R):
+        x = np.dot(R.T, pos.T)
+        return np.sum(np.divide(x.T, a) ** 2, axis=1)
+
+    # Define moment of inertia tensor:
+    def MoI(r, m, ndim=3):
+        return np.array([[np.sum(m * r[:, i] * r[:, j]) for j in range(ndim)] for i in range(ndim)])
+
+    # Calculate the shape in a single shell:
+    def shell_shape(r, pos, mass, a, R, r_range, ndim=3):
+
+        # Find contents of homoeoidal shell:
+        mult = r_range / np.mean(a)
+        in_shell = (r > min(a) * mult[0]) & (r < max(a) * mult[1])
+        pos, mass = pos[in_shell], mass[in_shell]
+        inner = Ellipsoid(pos, a * mult[0], R)
+        outer = Ellipsoid(pos, a * mult[1], R)
+        in_ellipse = (inner > 1) & (outer < 1)
+        ellipse_pos, ellipse_mass = pos[in_ellipse], mass[in_ellipse]
+
+        # End if there is no data in range:
+        if not len(ellipse_mass):
+            return a, R, np.sum(in_ellipse)
+
+        # Calculate shape tensor & diagonalise:
+        D = list(np.linalg.eigh(MoI(ellipse_pos, ellipse_mass, ndim) / np.sum(ellipse_mass)))
+
+        # Rescale axis ratios to maintain constant ellipsoidal volume:
+        R2 = np.array(D[1])
+        a2 = np.sqrt(abs(D[0]) * ndim)
+        div = (np.prod(a) / np.prod(a2)) ** (1 / float(ndim))
+        a2 *= div
+
+        return a2, R2, np.sum(in_ellipse)
+
+    # Re-align rotation matrix:
+    def realign(R, a, ndim):
+        if ndim == 3:
+            if a[0] > a[1] > a[2] < a[0]:
+                pass  # abc
+            elif a[0] > a[1] < a[2] < a[0]:
+                R = np.dot(R, Rx)  # acb
+            elif a[0] < a[1] > a[2] < a[0]:
+                R = np.dot(R, Rz)  # bac
+            elif a[0] < a[1] > a[2] > a[0]:
+                R = np.dot(np.dot(R, Rx), Ry)  # bca
+            elif a[0] > a[1] < a[2] > a[0]:
+                R = np.dot(np.dot(R, Rx), Rz)  # cab
+            elif a[0] < a[1] < a[2] > a[0]:
+                R = np.dot(R, Ry)  # cba
+        elif ndim == 2:
+            if a[0] > a[1]:
+                pass  # ab
+            elif a[0] < a[1]:
+                R = np.dot(R, Rz[:2, :2])  # ba
+        return R
+
+    # Calculate the angle between two vectors:
+    def angle(a, b):
+        return np.arccos(np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+    # Flip x,y,z axes of R2 if they provide a better alignment with R1.
+    def flip_axes(R1, R2):
+        for i in range(len(R1)):
+            if angle(R1[:, i], -R2[:, i]) < angle(R1[:, i], R2[:, i]):
+                R2[:, i] *= -1
+        return R2
+
+    # -----------------------------FUNCTIONS-----------------------------
+
+    # Set up binning:
+    r = np.array(sim['r']) if ndim == 3 else np.array(sim['rxy'])
+    pos = np.array(sim['pos'])[:, :ndim]
+    mass = np.array(sim[calpa])
+
+    if (bins == 'equal'):  # Bins contain equal number of particles
+        full_bins = sn(np.sort(r[(r >= rmin) & (r <= rmax)]), nbins * 2)
+        bin_edges = full_bins[0:nbins * 2 + 1:2]
+        rbins = full_bins[1:nbins * 2 + 1:2]
+    elif (bins == 'log'):  # Bins are logarithmically spaced
+        bin_edges = np.logspace(np.log10(rmin), np.log10(rmax), nbins + 1)
+        rbins = np.sqrt(bin_edges[:-1] * bin_edges[1:])
+    elif (bins == 'lin'):  # Bins are linearly spaced
+        bin_edges = np.linspace(rmin, rmax, nbins + 1)
+        rbins = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+
+    # Initialise the shape arrays:
+    rbins = rbins
+    axis_lengths = np.zeros([nbins, ndim])
+    N_in_bin = np.zeros(nbins).astype('int')
+    rotations = [0] * nbins
+
+    # Loop over all radial bins:
+    for i in range(nbins):
+
+        # Initial spherical shell:
+        a = np.ones(ndim) * rbins[i]
+        a2 = np.zeros(ndim)
+        a2[0] = np.inf
+        R = np.identity(ndim)
+
+        # Iterate shape estimate until a convergence criterion is met:
+        iteration_counter = 0
+        while ((np.abs(a[1] / a[0] - np.sort(a2)[-2] / max(a2)) > tol) & \
+               (np.abs(a[-1] / a[0] - min(a2) / max(a2)) > tol)) & \
+                (iteration_counter < max_iterations):
+            a2 = a.copy()
+            a, R, N = shell_shape(r, pos, mass, a, R, bin_edges[[i, i + 1]], ndim)
+            iteration_counter += 1
+
+        # Adjust orientation to match axis ratio order:
+        R = realign(R, a, ndim)
+
+        # Ensure consistent coordinate system:
+        if np.sign(np.linalg.det(R)) == -1:
+            R[:, 1] *= -1
+
+        # Update profile arrays:
+        a = np.flip(np.sort(a))
+        axis_lengths[i], rotations[i], N_in_bin[i] = a, R, N
+
+    # Ensure the axis vectors point in a consistent direction:
+    if justify:
+        _, _, _, R_global = MoI_shape(sim, nbins=1, rmin=rmin, rmax=rmax, ndim=ndim)
+        rotations = np.array([flip_axes(R_global, i) for i in rotations])
+
+    return rbins, np.squeeze(axis_lengths.T).T, N_in_bin, np.squeeze(rotations)

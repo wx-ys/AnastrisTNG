@@ -16,7 +16,7 @@ from pynbody.analysis.angmom import calc_faceon_matrix
         
 from AnastrisTNG.TNGunits import illustrisTNGruns, NotneedtransGCPa
 from AnastrisTNG.pytreegrav import Potential, Accel
-from AnastrisTNG.Anatools import ang_mom, fit_krotmax
+from AnastrisTNG.Anatools import ang_mom, fit_krotmax, MoI_shape
 
 class Basehalo(SubSnap):
     """
@@ -255,6 +255,7 @@ class Basehalo(SubSnap):
     
         mode = kwargs.get('mode', 'ssc')
         shift = kwargs.get('shift', True)
+        alignwith = kwargs.get('alignwith', 'all')
         alignmode = kwargs.get('alignmode', 'jz')
         retmatrix = kwargs.get('retmatrix',False)
 
@@ -268,12 +269,15 @@ class Basehalo(SubSnap):
             trans = calc_faceon_matrix(angmom)
         elif alignmode == 'krot':
             self.shift(pos=pos_center, vel=vel_center)
-            resul = self.krot(calmode = 'max', **kwargs)
+            resul = self.krot(calmode = 'max', calfor = alignwith,**kwargs)
             if resul:
                 trans = resul['krotmat']
             else:
                 self.shift(pos=-pos_center, vel=-vel_center)
                 return
+        elif alignmode == 'moi':
+            self.shift(pos=pos_center, vel=vel_center)
+            trans = self.moi_shape(calfor = alignwith, calpa = 'mass', nbins=1)[3]
         else:
             print('No such alignmode')
             return
@@ -306,6 +310,25 @@ class Basehalo(SubSnap):
         R = virial_radius(self, cen=cen, overden=overden, rho_def=rho_def)
         return R
 
+    def moi_shape(self, calfor: str = 'all', calpa: str = 'mass', **kwargs):
+        '''
+        Returns
+        -------
+        rbin : SimArray
+            The radial bins used for the fitting
+
+        axis_lengths : SimArray
+            A nbins x ndim array containing the axis lengths of the ellipsoids in each shell
+
+        num_particles : np.ndarray
+            The number of particles within each bin
+
+        rotation_matrices : np.ndarray
+            The rotation matrices for each shell
+        '''
+        filtbyr = self._sele_family(calfor, **kwargs)
+        return MoI_shape(filtbyr, calpa = calpa, **kwargs)
+    
     def krot(self, rmax: float = None, calfor: str = 'star', **kwargs) -> np.ndarray:
 
         filtbyr = self._sele_family(calfor, rmax=rmax, **kwargs)
