@@ -120,6 +120,7 @@ class Halos:
         """
         k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Halo]
         ku = SimArray(np.array(k), k[0].units)
+        ku.sim = self.__snaps
         return ku
 
     def load_GC(self):

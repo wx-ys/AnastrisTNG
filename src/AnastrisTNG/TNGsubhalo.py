@@ -127,8 +127,9 @@ class Subhalos:
         SimArray
             A SimArray containing the group catalog data for the specified key.
         """
-        k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Halo]
+        k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Subhalo]
         ku = SimArray(np.array(k), k[0].units)
+        ku.sim = self.__snaps
         return ku
 
     def load_GC(self):
