@@ -502,6 +502,7 @@ class Basehalo(SubSnap):
         Rmax = kwargs.get('Rmax', None)
         Rmin = kwargs.get('Rmin', None)
         zmax = kwargs.get('zmax', None)
+        sele = kwargs.get('sele', None)
         
         if set(['star', 's']) & set([family.lower()]):
             selfam = self.s
@@ -522,6 +523,8 @@ class Basehalo(SubSnap):
         else:
             print('calfor wrong !!!')
             return
+        if sele is not None:
+            selfam = selfam[sele]
         if rmax:
             selfam = selfam[filt.LowPass('r', rmax)]
         if rmin:

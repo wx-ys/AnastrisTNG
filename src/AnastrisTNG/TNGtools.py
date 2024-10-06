@@ -236,7 +236,22 @@ class profile(Profile):
                     result[i] = np.nan
                 else:
                     sorted_name = sorted(name_array)
-                    result[i] = sorted_name[int(np.floor(q /100 * len(subs)))]
+                    weight_array = mass_array[np.argsort(name_array)]
+                    cumw = np.cumsum(weight_array) / np.sum(weight_array)
+                    imin = min(
+                            np.arange(len(sorted_name)), key=lambda x: abs(cumw[x] - q/100))
+                    inc = q/100 - cumw[imin]
+                    lowval = sorted_name[imin]
+                    if inc > 0:
+                        nextval = sorted_name[imin + 1]
+                    else:
+                        if imin == 0:
+                            nextval = lowval
+                        else:
+                            nextval = sorted_name[imin - 1]
+
+                    result[i] = lowval + inc * (nextval - lowval)
+                    #result[i] = sorted_name[cumw*100>q].min()+sorted_name[cumw*100<q].max()
             else:
                 result[i] = (name_array * mass_array).sum() / self['weight_fn'][i]
 
@@ -414,7 +429,7 @@ class Profile_1D:
                 return self.__P[self._util_fa(ks)][self._util_pr(ks)][ks[0]]
             else:
                 if key in self._properties:
-                    return self._properties[key]()
+                    return self._properties[key](self)
                 else:
                     return self.__P['all']['R'][key]
         else:
@@ -431,9 +446,9 @@ def Qgas(self):
     Toomre-Q for gas
     '''
     return (
-        self.__P['all']['R']['kappa']
-        * self.__P['gas']['R']['vr_disp']
-        / (np.pi * self.__P['gas']['R']['density'] * units.G)
+        self['kappa-all-R']
+        * self['vr_disp-gas-R']
+        / (np.pi * self['density-gas-R'] * units.G)
     ).in_units("")
     
 @Profile_1D.profile_property  
@@ -442,9 +457,20 @@ def Qstar(self):
     Toomre-Q parameter
     '''
     return (
-        self.__P['all']['R']['kappa']
-        * self.__P['star']['R']['vr_disp']
-        / (3.36 * self.__P['star']['R']['density'] * units.G)
+        self['kappa-all-R']
+        * self['vr_disp-star-R']
+        / (3.36 * self['density-star-R'] * units.G)
+    ).in_units("")
+    
+@Profile_1D.profile_property  
+def Qs(self):
+    '''
+    Toomre-Q parameter
+    '''
+    return (
+        self['kappa-all-R']
+        * self['vr_disp-star-R']
+        / (np.pi * self['density-star-R'] * units.G)
     ).in_units("")
     
 @Profile_1D.profile_property  
@@ -452,16 +478,8 @@ def Q2ws(self):
     '''
     Toomre Q of two component. Wang & Silk (1994)
     '''
-    Qs = (
-        self.__P['all']['R']['kappa']
-        * self.__P['star']['R']['vr_disp']
-        / (np.pi * self.__P['star']['R']['density'] * units.G)
-    ).in_units("")
-    Qg = (
-        self.__P['all']['R']['kappa']
-        * self.__P['gas']['R']['vr_disp']
-        / (np.pi * self.__P['gas']['R']['density'] * units.G)
-    ).in_units("")
+    Qs = self['Qs']
+    Qg = self['Qgas']
     return (Qs * Qg) / (Qs + Qg)
 
 @Profile_1D.profile_property  
@@ -471,20 +489,12 @@ def Q2thin(self):
     '''
     w = (
         2
-        * self.__P['star']['R']['vr_disp']
-        * self.__P['gas']['R']['vr_disp']
-        / ((self.__P['star']['R']['vr_disp']) ** 2 + self.__P['gas']['R']['vr_disp'] ** 2)
+        * self['vr_disp-star-R']
+        * self['vr_disp-gas-R']
+        / ((self['vr_disp-star-R']) ** 2 + self['vr_disp-gas-R'] ** 2)
     ).in_units("")
-    Qs = (
-        self.__P['all']['R']['kappa']
-        * self.__P['star']['R']['vr_disp']
-        / (np.pi * self.__P['star']['R']['density'] * units.G)
-    ).in_units("")
-    Qg = (
-        self.__P['all']['R']['kappa']
-        * self.__P['gas']['R']['vr_disp']
-        / (np.pi * self.__P['gas']['R']['density'] * units.G)
-    ).in_units("")
+    Qs = self['Qs']
+    Qg = self['Qgas']
     q = [Qs * Qg / (Qs + w * Qg)]
     return [
         (
@@ -502,24 +512,16 @@ def Q2thick(self):
     '''
     w = (
         2
-        * self.__P['star']['R']['vr_disp']
-        * self.__P['gas']['R']['vr_disp']
-        / ((self.__P['star']['R']['vr_disp']) ** 2 + self.__P['gas']['R']['vr_disp'] ** 2)
+        * self['vr_disp-star-R']
+        * self['vr_disp-gas-R']
+        / ((self['vr_disp-star-R']) ** 2 + self['vr_disp-gas-R'] ** 2)
     ).in_units("")
-    Ts = 0.8 + 0.7 * (self.__P['star']['R']['vz_disp'] / self.__P['star']['R']['vr_disp']).in_units(
+    Ts = 0.8 + 0.7 * (self['vz_disp-star-R'] / self['vr_disp-star-R']).in_units(
         ""
     )
-    Tg = 0.8 + 0.7 * (self.__P['gas']['R']['vz_disp'] / self.__P['gas']['R']['vr_disp']).in_units("")
-    Qs = (
-        self.__P['all']['R']['kappa']
-        * self.__P['star']['R']['vr_disp']
-        / (np.pi * self.__P['star']['R']['density'] * units.G)
-    ).in_units("")
-    Qg = (
-        self.__P['all']['R']['kappa']
-        * self.__P['gas']['R']['vr_disp']
-        / (np.pi * self.__P['gas']['R']['density'] * units.G)
-    ).in_units("")
+    Tg = 0.8 + 0.7 * (self['vz_disp-gas-R'] / self['vr_disp-gas-R']).in_units("")
+    Qs = self['Qs']
+    Qg = self['Qgas']
     Qs = Qs * Ts
     Qg = Qg * Tg
     return [

@@ -215,7 +215,7 @@ def fit_krotmax(pos, vel, mass, method='BFGS'):
 
 # a modified version from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#shape
 def MoI_shape(sim, calpa: str = 'mass', nbins=1, rmin=None, rmax=None, bins='equal',
-          ndim=3, max_iterations=10, tol=1e-3, justify=False):
+          ndim=3, max_iterations=10, tol=1e-3, justify=False, **kwargs):
     if (rmax == None): rmax = sim['r'].max()
     if (rmin == None): rmin = rmax / 1E3
     assert ndim in [2, 3]
@@ -365,5 +365,9 @@ def MoI_shape(sim, calpa: str = 'mass', nbins=1, rmin=None, rmax=None, bins='equ
     if justify:
         _, _, _, R_global = MoI_shape(sim, nbins=1, rmin=rmin, rmax=rmax, ndim=ndim)
         rotations = np.array([flip_axes(R_global, i) for i in rotations])
-
-    return rbins, np.squeeze(axis_lengths.T).T, N_in_bin, np.squeeze(rotations)
+    rotations = np.squeeze(rotations)
+    if len(rotations.shape)>2:
+        angles = [np.degrees(angle(np.array([0,0,1]), np.dot(i,np.array([0,0,1])))) for i in rotations]
+    else:
+        angles = np.degrees(angle(np.array([0,0,1]), np.dot(rotations,np.array([0,0,1])))) 
+    return rbins, np.squeeze(axis_lengths.T).T, N_in_bin, rotations, angles
