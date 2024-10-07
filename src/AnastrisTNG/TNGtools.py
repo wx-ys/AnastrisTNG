@@ -537,27 +537,39 @@ def Q2thick(self):
 class Star_birth(Basehalo):
     '''the pos when the star form according to the host galaxy position'''
     
-    def __init__(self, Snap, subID, usebirthvel = True, usebirthmass = True):
+    def __init__(self, Snap, ID, issubhalo = True, usebirthvel = True, usebirthmass = True):
         '''
         input:
         Snap,
-        subID,
+        ID,
         '''
 
         originfield = Snap.load_particle_para['star_fields'].copy()
         Snap.load_particle_para['star_fields'] = ['Coordinates', 'Velocities', 'Masses', 'ParticleIDs',
                                                   'GFM_StellarFormationTime', 'GFM_InitialMass', 'BirthPos', 'BirthVel']
-        PT = Snap.load_particle(subID, decorate = False, order = 'star',)
+        if issubhalo:
+            PT = Snap.load_particle(ID, groupType = 'Subhalo', decorate = False, order = 'star',)
+        else:
+            PT = Snap.load_particle(ID, groupType = 'Halo',decorate = False, order = 'star',)
         Basehalo.__init__(self, PT)
+        if issubhalo:
+            evo = Snap.galaxy_evolution(
+                ID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin'], physical_units=False
+            )
+            pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / self.h
 
-        evo = Snap.galaxy_evolution(
-            subID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin'], physical_units=False
-        )
-        pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / self.h
+            vel_ckpcGyr = (
+                evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']
+            ).T
+        else:
+            evo = Snap.halo_evolution(
+                ID, physical_units=False
+            )
+            pos_ckpc = (evo['GroupPos']).view(np.ndarray) / self.h
 
-        vel_ckpcGyr = (
-            evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']
-        ).T
+            vel_ckpcGyr = (
+                evo['GroupVel'].in_units('kpc Gyr**-1 a**-1').view(np.ndarray).T / evo['a'] /evo['a']
+            ).T
         time_Gyr = evo['t'].in_units('Gyr')
         self.orbit = Orbit(pos_ckpc, vel_ckpcGyr, time_Gyr)
         self.s['BirthPos'].convert_units('a kpc')

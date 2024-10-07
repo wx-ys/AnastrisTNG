@@ -14,6 +14,7 @@ from AnastrisTNG.illustris_python.sublink import loadTree, maxPastMass
 from AnastrisTNG.illustris_python.groupcat import loadHeader
 from AnastrisTNG.TNGunits import groupcat_units
 from AnastrisTNG.TNGsnapshot import get_t
+from AnastrisTNG.TNGgroupcat import haloproperties
 
 
 # Refer to illustris_python.sublink.numMergers, This is a modified version.
@@ -196,6 +197,54 @@ def galaxy_evolution(
         ]
         tree['t'] = SimArray(np.array(time), units.Gyr)
     return tree
+
+# idea from https://www.tng-project.org/data/forum/topic/262/halo-evolution/
+def halo_evolution(
+    basePath: str,
+    snap: int,
+    haloID: int,
+    physical_units: bool = True,
+) -> dict:
+    proper = haloproperties(
+            basePath,snap, haloID
+        )
+    centersubhalo=proper['GroupFirstSub']
+    centerevo=galaxy_evolution(basePath, snap=snap, subID=centersubhalo,
+                               fields=['SubhaloGrNr'], physical_units=physical_units)
+    SnapNum = centerevo['SnapNum']
+    HaloID = centerevo['SubhaloGrNr']
+    halotree = {i: [] for i in proper}  # halotree = dict.fromkeys(proper.keys(),[])
+    for i in range(len(SnapNum)):
+        proper_i = haloproperties(
+            basePath,SnapNum[i], HaloID[i]
+        )
+        for j in proper_i:
+            halotree[j].append(proper_i[j])
+    for i in halotree:
+        halotree[i] = SimArray(halotree[i],proper[i].units)
+    halotree['HaloID']=HaloID
+    halotree['SnapNum']=SnapNum
+    halotree['count'] = centerevo['count']
+    
+    if centerevo['count'] > 0 and physical_units:
+        tree = _physical_unit_evo(halotree, basePath)
+    if centerevo['count'] > 0:
+        scalefactor = [loadHeader(basePath, i)['Time'] for i in halotree['SnapNum']]
+        halotree['a'] = np.array(scalefactor)
+        omega_m = loadHeader(basePath, 99)['Omega0']
+        H0_kmsMpc = (
+            100.0
+            * loadHeader(basePath, 99)['HubbleParam']
+            * units.km
+            / units.s
+            / units.Mpc
+        )
+
+        time = [
+            get_t(omega_m, (1 / i - 1), H0_kmsMpc).in_units('Gyr') for i in scalefactor
+        ]
+        halotree['t'] = SimArray(np.array(time), units.Gyr)
+    return halotree
 
 
 def _physical_unit_mer(array: SimArray, basepath: str, snap: int) -> SimArray:

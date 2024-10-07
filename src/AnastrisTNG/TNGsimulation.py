@@ -244,6 +244,18 @@ class Snapshot(SimSnap):
             fields,
             physical_units,
         )
+    def halo_evolution(
+        self,
+        haloID,
+        physical_units: bool = True,
+    ):
+
+        return halo_evolution(
+            self.properties['filedir'],
+            self.properties['Snapshot'],
+            haloID,
+            physical_units,
+        )
 
     def merger_history(
         self,
