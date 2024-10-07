@@ -387,11 +387,22 @@ class Profile_1D:
         self.__P['star']['R']=profile(sim.s, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
         self.__P['star']['Z']=profile(sim.s, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
         self.__P['star']['z']=profile(sim, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
-        
-        self.__P['gas']['r']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins,ndim=3, type=type, **kwargs)
-        self.__P['gas']['R']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
-        self.__P['gas']['Z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
-        self.__P['gas']['z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+        try:
+            self.__P['gas']['r']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins,ndim=3, type=type, **kwargs)
+        except:
+            print('No gas r')
+        try:
+            self.__P['gas']['R']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
+        except:
+            print('No gas R')
+        try:
+            self.__P['gas']['Z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, zmax = zmax, **kwargs)
+        except:
+            print('No gas Z')
+        try:
+            self.__P['gas']['z']=profile(sim.g, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, zmax = zmax,**kwargs)
+        except:
+            print('No gas z')
         
         self.__P['dm']['r']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=3, type=type, **kwargs)
         self.__P['dm']['R']=profile(sim.dm, rmin=rmin, rmax=rmax, nbins=nbins, ndim=2, type=type, **kwargs)
@@ -447,7 +458,7 @@ def Qgas(self):
     '''
     return (
         self['kappa-all-R']
-        * self['vr_disp-gas-R']
+        * self['vrxy_disp-gas-R']
         / (np.pi * self['density-gas-R'] * units.G)
     ).in_units("")
     
@@ -458,7 +469,7 @@ def Qstar(self):
     '''
     return (
         self['kappa-all-R']
-        * self['vr_disp-star-R']
+        * self['vrxy_disp-star-R']
         / (3.36 * self['density-star-R'] * units.G)
     ).in_units("")
     
@@ -469,7 +480,7 @@ def Qs(self):
     '''
     return (
         self['kappa-all-R']
-        * self['vr_disp-star-R']
+        * self['vrxy_disp-star-R']
         / (np.pi * self['density-star-R'] * units.G)
     ).in_units("")
     
@@ -489,9 +500,9 @@ def Q2thin(self):
     '''
     w = (
         2
-        * self['vr_disp-star-R']
-        * self['vr_disp-gas-R']
-        / ((self['vr_disp-star-R']) ** 2 + self['vr_disp-gas-R'] ** 2)
+        * self['vrxy_disp-star-R']
+        * self['vrxy_disp-gas-R']
+        / ((self['vrxy_disp-star-R']) ** 2 + self['vrxy_disp-gas-R'] ** 2)
     ).in_units("")
     Qs = self['Qs']
     Qg = self['Qgas']
@@ -512,14 +523,14 @@ def Q2thick(self):
     '''
     w = (
         2
-        * self['vr_disp-star-R']
-        * self['vr_disp-gas-R']
-        / ((self['vr_disp-star-R']) ** 2 + self['vr_disp-gas-R'] ** 2)
+        * self['vrxy_disp-star-R']
+        * self['vrxy_disp-gas-R']
+        / ((self['vrxy_disp-star-R']) ** 2 + self['vrxy_disp-gas-R'] ** 2)
     ).in_units("")
-    Ts = 0.8 + 0.7 * (self['vz_disp-star-R'] / self['vr_disp-star-R']).in_units(
+    Ts = 0.8 + 0.7 * (self['vz_disp-star-R'] / self['vrxy_disp-star-R']).in_units(
         ""
     )
-    Tg = 0.8 + 0.7 * (self['vz_disp-gas-R'] / self['vr_disp-gas-R']).in_units("")
+    Tg = 0.8 + 0.7 * (self['vz_disp-gas-R'] / self['vrxy_disp-gas-R']).in_units("")
     Qs = self['Qs']
     Qg = self['Qgas']
     Qs = Qs * Ts
