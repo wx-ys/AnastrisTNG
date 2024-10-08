@@ -548,7 +548,7 @@ def Q2thick(self):
 class Star_birth(Basehalo):
     '''the pos when the star form according to the host galaxy position'''
     
-    def __init__(self, Snap, ID, issubhalo = True, usebirthvel = True, usebirthmass = True):
+    def __init__(self, Snap, ID, issubhalo = True, usebirthvel = True, usebirthmass = True, useCM = False):
         '''
         input:
         Snap,
@@ -565,9 +565,12 @@ class Star_birth(Basehalo):
         Basehalo.__init__(self, PT)
         if issubhalo:
             evo = Snap.galaxy_evolution(
-                ID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin'], physical_units=False
+                ID, ['SubhaloPos', 'SubhaloVel', 'SubhaloSpin','SubhaloCM'], physical_units=False
             )
-            pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / self.h
+            if useCM:
+                pos_ckpc = (evo['SubhaloCM']).view(np.ndarray) / self.h
+            else:
+                pos_ckpc = (evo['SubhaloPos']).view(np.ndarray) / self.h
 
             vel_ckpcGyr = (
                 evo['SubhaloVel'].in_units('kpc Gyr**-1').view(np.ndarray).T / evo['a']
@@ -576,7 +579,10 @@ class Star_birth(Basehalo):
             evo = Snap.halo_evolution(
                 ID, physical_units=False
             )
-            pos_ckpc = (evo['GroupPos']).view(np.ndarray) / self.h
+            if useCM:
+                pos_ckpc = (evo['GroupCM']).view(np.ndarray) / self.h
+            else:
+                pos_ckpc = (evo['GroupPos']).view(np.ndarray) / self.h
 
             vel_ckpcGyr = (
                 evo['GroupVel'].in_units('kpc Gyr**-1 a**-1').view(np.ndarray).T / evo['a'] /evo['a']
