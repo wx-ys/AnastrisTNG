@@ -104,7 +104,7 @@ class Halos:
         for i in self._data:
             self._data[i] = Halo(self._generate_value(i))
 
-    def GC(self, key):
+    def GC(self, key, IDs=None):
         """
         Returns a combined SimArray of a specific parameter from all loaded halos.
 
@@ -112,13 +112,18 @@ class Halos:
         -----------
         key : str
             The key in the group catalog.
+        IDs :
+            [haloid]
 
         Returns:
         --------
         ku : SimArray
             A SimArray combining the values of the specified key from all halos.
         """
-        k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Halo]
+        if IDs is None:
+            k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Halo]
+        else:
+            k = [self[str(i)].GC[key] for i in IDs]
         ku = SimArray(np.array(k), k[0].units)
         ku.sim = self.__snaps
         return ku

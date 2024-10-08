@@ -113,7 +113,7 @@ class Subhalos:
         for i in self._data:
             self._data[i] = Subhalo(self._generate_value(i))
 
-    def GC(self, key):
+    def GC(self, key, IDs = None):
         """
         Retrieves the group catalog data for a specific subhalo parameter.
 
@@ -121,13 +121,18 @@ class Subhalos:
         -----------
         key : str
             The key to access in the group catalog data.
+        IDs :
+            [subhaloid]
 
         Returns:
         --------
         SimArray
             A SimArray containing the group catalog data for the specified key.
         """
-        k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Subhalo]
+        if IDs is None:
+            k = [self[str(i)].GC[key] for i in self.__snaps.GC_loaded_Subhalo]
+        else:
+            k = [self[str(i)].GC[key] for i in IDs]
         ku = SimArray(np.array(k), k[0].units)
         ku.sim = self.__snaps
         return ku
