@@ -231,6 +231,18 @@ class Basehalo(SubSnap):
         filtbyr = self._sele_family(alignwith, rmax=rmax, **kwargs)
         angmom = ang_mom(filtbyr)
         return angmom
+    
+    def to_cen(self, mode='ssc',cen=None,vel=None):
+        self.check_boundary()
+        if cen is None:
+            pos_cen = self.center(mode=mode)
+        else:
+            pos_cen = cen
+        if vel is None:
+            vel_cen = self.vel_center(pos=pos_cen)
+        else:
+            vel_cen = vel
+        self.shift(pos=pos_cen, vel=vel_cen)
 
     def face_on(self, **kwargs):
         """
