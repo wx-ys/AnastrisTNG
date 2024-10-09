@@ -6,4 +6,4 @@ recursive-include src/AnastrisTNG/illustris_python *.py
 recursive-include src/AnastrisTNG/pytreegrav *.py
 include src/AnastrisTNG/illustris_python/LICENSE
 include src/AnastrisTNG/pytreegrav/LICENSE
-include examples/AnastrisTNG_example-cn.ipynb
+include examples *.ipynb

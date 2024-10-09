@@ -160,7 +160,7 @@ class Basehalo(SubSnap):
             print('No particles loaded in this Halo')
             return
 
-        if pos == None:
+        if pos is None:
             pos = self.center(mode)
 
         cen = self.s[filt.Sphere(r_cal, pos)]
