@@ -3,6 +3,7 @@ Load illustrisTNG data and process it.
 '''
 
 from functools import reduce
+from copy import deepcopy
 
 from pynbody.snapshot import SimSnap, new
 from pynbody import filt
@@ -587,7 +588,10 @@ class Snapshot(SimSnap):
                         f.bh['HaloID'] = SimArray(
                             -1 * np.ones(len(f.bh)).astype(np.int32)
                         )
-        f.properties = self.properties.copy()
+        f.properties = deepcopy(self.properties)
+        for i in f.properties:
+            if isinstance(f.properties[i], SimArray):
+                f.properties[i].sim = f
         f._filename = self.filename + '_' + groupType + '_' + str(ID)
         if decorate:
             if groupType == 'Halo':
