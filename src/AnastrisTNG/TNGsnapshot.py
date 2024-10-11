@@ -146,7 +146,7 @@ class Basehalo(SubSnap):
                     if new_unit != v.units:
                         self.GC[k].convert_units(new_unit)
 
-    def vel_center(self, mode='ssc', pos=None, r_cal='1 kpc'):
+    def vel_center(self, mode='ssc', pos=None, r_cal='2 kpc'):
         '''
         The center velocity.
         Refer from https://pynbody.readthedocs.io/latest/_modules/pynbody/analysis/halo.html#vel_center

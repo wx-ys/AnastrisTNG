@@ -587,7 +587,7 @@ class Snapshot(SimSnap):
                         f.bh['HaloID'] = SimArray(
                             -1 * np.ones(len(f.bh)).astype(np.int32)
                         )
-        f.properties = self.properties
+        f.properties = self.properties.copy()
         f._filename = self.filename + '_' + groupType + '_' + str(ID)
         if decorate:
             if groupType == 'Halo':

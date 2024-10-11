@@ -184,6 +184,11 @@ class profile(Profile):
             self._profiles[name] = self._auto_profile(name[:-4], median=True)
             self._profiles[name].sim = self.sim
             return self._profiles[name]
+        
+        elif name[-4:] == "_sum" and (name[:-4] in list(self.sim.keys()) or name[:-4] in self.sim.all_keys()):
+            self._profiles[name] = self._auto_profile(name[:-4], sum=True)
+            self._profiles[name].sim = self.sim
+            return self._profiles[name]
 
         elif name[0:2] == "d_" and (name[2:] in list(self.keys()) or name[2:] in self.derivable_keys() or name[2:] in self.sim.all_keys()):
             #            if np.diff(self['dr']).all() < 1e-13 :
@@ -200,7 +205,7 @@ class profile(Profile):
         else:
             raise KeyError(name + " is not a valid profile")
 
-    def _auto_profile(self, name, dispersion=False, rms=False, median=False, q=None ):
+    def _auto_profile(self, name, dispersion=False, rms=False, median=False,sum=False, q=None ):
         result = np.zeros(self.nbins)
 
         # force derivation of array if necessary:
@@ -225,6 +230,8 @@ class profile(Profile):
             elif rms:
                 result[i] = np.sqrt(
                     (name_array ** 2 * mass_array).sum() / self['weight_fn'][i])
+            elif sum:
+                result[i] = name_array.sum()
             elif median:
                 if len(subs) == 0:
                     result[i] = np.nan
