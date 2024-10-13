@@ -368,6 +368,15 @@ def MoI_shape(sim, calpa: str = 'mass', nbins=1, rmin=None, rmax=None, bins='equ
     rotations = np.squeeze(rotations)
     if len(rotations.shape)>2:
         angles = [np.degrees(angle(np.array([0,0,1]), np.dot(i,np.array([0,0,1])))) for i in rotations]
+        abc_vec = [[np.dot(i,np.array([1,0,0])),np.dot(i,np.array([0,1,0])),np.dot(i,np.array([0,0,1]))] for i in rotations]
     else:
         angles = np.degrees(angle(np.array([0,0,1]), np.dot(rotations,np.array([0,0,1])))) 
-    return rbins, np.squeeze(axis_lengths.T).T, N_in_bin, rotations, angles
+        abc_vec = [np.dot(rotations,np.array([1,0,0])),np.dot(rotations,np.array([0,1,0])),np.dot(rotations,np.array([0,0,1]))]
+    retdict={}
+    retdict['rbins']=rbins
+    retdict['N_in_bin']=N_in_bin
+    retdict['abc']=np.squeeze(axis_lengths.T).T
+    retdict['abc_vec']=abc_vec
+    retdict['rotations']=rotations
+    retdict['angles']=angles
+    return retdict

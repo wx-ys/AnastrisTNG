@@ -11,6 +11,14 @@ Install this in editable mode.
 cd AnastrisTNG
 pip install -e .
 ```
+AnastrisTNG uses the following python packages:
+
+* numpy, scipy
+* pynbody
+* h5py
+* tqdm
+* six
+* numba
 
 ## Usage
 
