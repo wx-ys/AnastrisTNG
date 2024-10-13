@@ -28,8 +28,15 @@ from AnastrisTNG import TNGsimulation
 BasePath = 'filepath'       
 snap=99  #snapshot
 
-Snapshot=TNGsimulation.Snapshot(BasePath,snap)
+Snapshot=TNGsimulation.Snapshot(BasePath,snap) # use the data of snapshot99
+
 Snapshot.load_halo(400)    #load a halo(id=400)
+Snapshot.load_subhalo(8)    #load a subhalo(id=8)
+
+# load a single subhalo
+sub = Snapshot.load_particle(ID=10, groupType='Subhalo', decorate=True)
+sub.physical_units() #in physical unit
+sub.face_on(alignwith='star',rmax=8) # face on, based on stellar angular momentum.
 
 ```
 
