@@ -617,6 +617,17 @@ class Basehalo(SubSnap):
 
         return Rcall
 
+    def __getitem__(self,i):
+        try:
+            return super().__getitem__(i)
+        except:
+            pass
+        try:
+            return self.properties[i]
+        except:
+            pass
+        raise TypeError
+    
     def __getattr__(self, name):
         try:
             return super().__getattr__(name)
@@ -817,6 +828,7 @@ def age(sim):
 @derived_array
 def U_mag(sim):
     """
+    Vega magnitudes
     see https://www.tng-project.org/data/docs/specifications/#parttype4 for details
     In detail, these are:
     Buser's X filter, where X=U,B3,V (Vega magnitudes),
@@ -831,68 +843,116 @@ def U_mag(sim):
 
     return sim['GFM_StellarPhotometrics'][:, 0]
 
+@derived_array
+def U_lum(sim):
+    """3571  unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['U_mag']-5.55))
+
 # star
 @derived_array
 def B_mag(sim):
-    """ """
+    """Vega magnitudes"""
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 1]
 
+@derived_array
+def B_lum(sim):
+    """4344 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['B_mag']-5.45))
+
 # star
 @derived_array
 def V_mag(sim):
-    """ """
+    """ Vega magnitudes """
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 2]
 
+@derived_array
+def V_lum(sim):
+    """5456 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['V_mag']-4.78))
+
 # star
 @derived_array
 def K_mag(sim):
-    """ """
+    """ Vega magnitudes"""
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 3]
 
+@derived_array
+def K_lum(sim):
+    """21603 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['K_mag']-3.29))
+
 # star
 @derived_array
 def g_mag(sim):
-    """ """
+    """AB magnitudes """
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 4]
 
+@derived_array
+def g_lum(sim):
+    """4670 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['g_mag']-5.12))
+
 # star
 @derived_array
 def r_mag(sim):
-    """ """
+    """AB magnitudes """
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 5]
 
+@derived_array
+def r_lum(sim):
+    """6156 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['r_mag']-4.64))
+
 # star
 @derived_array
 def i_mag(sim):
-    """ """
+    """AB magnitudes """
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 6]
 
+@derived_array
+def i_lum(sim):
+    """7472 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['i_mag']-4.53))
+
 # star
 @derived_array
 def z_mag(sim):
-    """ """
+    """AB magnitudes """
     if 'GFM_StellarPhotometrics' not in sim:
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 7]
+
+@derived_array
+def z_lum(sim):
+    """8917 unit Lsun"""
+    return 10.0 ** (-0.4*(sim.s['z_mag']-4.51))
+
+@derived_array
+def metals(sim):
+    """ """
+    if 'GFM_Metals' not in sim:
+        print("Need 'GFM_Metals'")
+
+    return sim['GFM_Metals']
 
 # Refer mostly https://pynbody.readthedocs.io/latest/
 # gas

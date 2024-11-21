@@ -283,6 +283,13 @@ class Snapshot(SimSnap):
             halosGC = halosproperty(
                 self.properties['filedir'], self.properties['Snapshot'], fields
             )
+            if len(fields) == 1:
+                try:
+                    hGC = SimArray(halosGC, groupcat_units(fields[0]))
+                    hGC.sim =self
+                    return hGC
+                except:
+                    return halosGC
             for i in halosGC:
                 try:
                     halosGC[i] = SimArray(halosGC[i], groupcat_units(i))
@@ -301,6 +308,14 @@ class Snapshot(SimSnap):
             subhaloGC = subhalosproperty(
                 self.properties['filedir'], self.properties['Snapshot'], fields
             )
+            if len(fields) == 1:
+                try:
+                    subGC = SimArray(subhaloGC, groupcat_units(fields[0]))
+                    subGC.sim = self
+                    return subGC
+                except:
+                    return subhaloGC
+            
             for i in subhaloGC:
                 try:
                     subhaloGC[i] = SimArray(subhaloGC[i], groupcat_units(i))

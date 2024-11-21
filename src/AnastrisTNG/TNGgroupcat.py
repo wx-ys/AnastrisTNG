@@ -299,11 +299,6 @@ def get_Halo_property(BasePath, Snap, haloID):
 
 def subhalosproperty(BasePath, Snap, fields):
     subhalos = loadSubhalos(BasePath, Snap, fields=fields)
-    for i in subhalos:
-        try:
-            subhalos[i] = SimArray(subhalos[i], groupcat_units(i))
-        except:
-            continue
     return subhalos
 
 
