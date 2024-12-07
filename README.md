@@ -32,9 +32,11 @@ AnastrisTNG uses the following python packages:
 * __Analyze groupcatalog, trace gas particles, etc__
 
 * __Easy to view the radial and vertical distribution of the constituent properties of galaxies, including 3D properties and 2D projection properties.__
-radial profile:
- <center class="half">
-     <img src="./images/radial_profile.png" width="301"/><img src="./images/vertical_profile.png" width="298"/>
+ <center>
+ <figure>
+<img src="./images/radial_profile.png" width="300px"/>
+<img src="./images/vertical_profile.png" width="297.2px"/>
+</figure>
  </center>
 
 
