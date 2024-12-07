@@ -20,6 +20,26 @@ AnastrisTNG uses the following python packages:
 * six
 * numba
 
+## Feature
+
+
+* __Supports TNG50, TNG100 and TNG300, including all data units.__
+
+* __Quickly explore galaxy evolution history, merger history, halo evolution history.__
+
+* __Analyze galactic interactions under the same coordinate system.__
+
+* __Analyze groupcatalog, trace gas particles, etc__
+
+* __Easy to view the radial and vertical distribution of the constituent properties of galaxies, including 3D properties and 2D projection properties.__
+radial profile:
+ <center class="half">
+     <img src="./images/radial_profile.png" width="301"/><img src="./images/vertical_profile.png" width="298"/>
+ </center>
+
+
+* __Quickly (tens of seconds) check galaxy star formation history over time and space (not public). If you're interested, please contact me.__
+![image](./images/TNG50_SFH_Subhalo_424289.png)
 ## Usage
 
 
