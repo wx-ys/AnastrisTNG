@@ -32,15 +32,15 @@ AnastrisTNG uses the following python packages:
 * __Analyze groupcatalog, trace gas particles, etc__
 
 * __Easy to view the radial and vertical distribution of the constituent properties of galaxies, including 3D properties and 2D projection properties.__
- <center>
- <figure>
-<img src="./images/radial_profile.png" width="300px"/>
-<img src="./images/vertical_profile.png" width="297.2px"/>
+<center>
+<figure>
+      <img src="./images/radial_profile.png"  height = "200">
+      <img src="./images/vertical_profile.png" height = "200">
+</center>
 </figure>
- </center>
 
 
-* __Quickly (tens of seconds) check galaxy star formation history over time and space (not public). If you're interested, please contact me.__
+* __Quickly (tens of seconds) check galaxy star formation history over time and space (not public). If you're interested, please contact me lushuai@stu.xmu.edu.cn.__
 ![image](./images/TNG50_SFH_Subhalo_424289.png)
 ## Usage
 
