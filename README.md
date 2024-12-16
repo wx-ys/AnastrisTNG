@@ -11,12 +11,14 @@ Install this in editable mode.
 cd AnastrisTNG
 pip install -e .
 ```
-gal3d uses the following python packages:
+AnastrisTNG uses the following python packages:
 
-* numba (optional)
-* numpy
-* scipy
+* numpy, scipy
+* pynbody
+* h5py
 * tqdm
+* six
+* numba
 
 
 
