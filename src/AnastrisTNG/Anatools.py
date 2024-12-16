@@ -4,13 +4,92 @@ Orbit: fit the orbit, based on the observed pos,vel,t
 ang_mom: vector
 angle_between_vectors:
 fit_krotmax:
-
+pattern_speed_z: calculate system pattern speed in Z direction
+d_pattern_speed_z: calculate system pattern speed acceleration in Z direction
 '''
 
 import numpy as np
 from scipy.linalg import solve
 from scipy.optimize import minimize
 from pynbody.analysis.angmom import calc_faceon_matrix
+
+
+def pattern_speed_z(pos=None,vel=None,mass=None, gal=None):
+    '''
+    calculate pattern speed in Z direction, assuming bar in x-y plane
+        from eq 46 of Pfenniger et al. 2023 
+    input: pos Nx3, vel Nx3, mass N, or only gal
+    output: pattern speed
+    use particles in the bar, calculate its pattern speed.
+    '''
+    if (gal!=None) and ('pos' in gal) and ('vel' in gal) and ('mass' in gal):
+        x = gal['pos'][:,0]
+        y = gal['pos'][:,1]
+    # z = pos[:,2]
+        vx = gal['vel'][:,0]
+        vy = gal['vel'][:,1]
+        mass = gal['mass']
+    elif (pos!=None) and (vel!=None) and (mass!=None):
+        x = pos[:,0]
+        y = pos[:,1]
+        # z = pos[:,2]
+        vx = vel[:,0]
+        vy = vel[:,1]
+        # vz = vel[:,2]
+    else:
+        raise ValueError("Incomplete input")
+   
+    Ixx = np.sum(mass*x*x)
+    Iyy = np.sum(mass*y*y)
+    Ixy = np.sum(mass*x*y)
+   # I_plus = 1/2*(Ixx+Iyy)
+    I_minus = 1/2*(Ixx-Iyy)
+    d_Ixy = np.sum(mass*(x*vy+y*vx))
+    d_I_minus = np.sum(mass*(x*vx-y*vy))
+    
+    omega_Iz = 1/2*(I_minus*d_Ixy-d_I_minus*Ixy)/(I_minus*I_minus+Ixy*Ixy)
+    return omega_Iz
+
+def d_pattern_speed_z(pos=None,vel=None,acc=None,mass=None,gal=None):
+    '''
+    calculate pattern speed acceleration in Z direction, assuming bar in x-y plane
+        from eq 47 of Pfenniger et al. 2023 
+    input: pos Nx3, vel Nx3, acc Nx3, mass N, or only gal
+    output: pattern speed acceleration
+    use particles in the bar, calculate its pattern speed.
+    '''
+    if (gal!=None) and ('pos' in gal) and ('vel' in gal) and ('mass' in gal) and ('acc' in gal.keys()):
+        x = gal['pos'][:,0]
+        y = gal['pos'][:,1]
+        vx = gal['vel'][:,0]
+        vy = gal['vel'][:,1]
+        ax = gal['acc'][:,0]
+        ay = gal['acc'][:,1]
+        mass = gal['mass']
+    elif (pos!=None) and (vel!=None) and (mass!=None) and (acc!=None):
+        x = pos[:,0]
+        y = pos[:,1]
+        vx = vel[:,0]
+        vy = vel[:,1]
+        ax = acc[:,0]
+        ay = acc[:,1]
+    else:
+        raise ValueError("Incomplete input")
+    
+    Ixx = np.sum(mass*x*x)
+    Iyy = np.sum(mass*y*y)
+    Ixy = np.sum(mass*x*y)
+    I_minus = 1/2*(Ixx-Iyy)
+    d_Ixy = np.sum(mass*(x*vy+y*vx))
+    d_I_minus = np.sum(mass*(x*vx-y*vy))
+    
+    omega_Iz = 1/2*(I_minus*d_Ixy-d_I_minus*Ixy)/(I_minus*I_minus+Ixy*Ixy)
+    
+    dd_Ixy = np.sum(mass*(2*vx*vy+x*ay+y*ax))
+    dd_I_minus = np.sum(mass*(vx*vx-vy*vy+x*ax-y*ay))
+    factor = (((I_minus*dd_Ixy-Ixy*dd_I_minus)/(I_minus*d_Ixy-Ixy*d_I_minus))
+              -2*((I_minus*d_I_minus+Ixy*d_Ixy)/(I_minus*I_minus+Ixy*Ixy)))
+    return omega_Iz*factor
 
 
 class Orbit:
