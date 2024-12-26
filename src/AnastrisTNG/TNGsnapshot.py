@@ -605,15 +605,26 @@ class Basehalo(SubSnap):
         calfam = self._sele_family(calfor, **kwargs)
 
         call_pa = calfam[calpa]
-        pacrit = frac * call_pa.sum()
+        
+        
         callr = calfam[callkeys]
         args = np.argsort(callr)
         r_sort = callr[args]
         pa_sort = call_pa[args]
         pa_cumsum = pa_sort.cumsum()
-        Rcall = (
-            r_sort[pa_cumsum > pacrit].min() + r_sort[pa_cumsum < pacrit].max()
-        ) / 2
+        if hasattr(frac,'__iter__'):
+            callpasum = call_pa.sum()
+            pacrit = [i * callpasum for i in frac]
+            Rcall = SimArray([(
+                r_sort[pa_cumsum > i].min() + r_sort[pa_cumsum < i].max()
+            ) / 2 for i in pacrit])
+            Rcall.units = r_sort.units
+            Rcall.sim = self
+        else:
+            pacrit = frac * call_pa.sum()
+            Rcall = (
+                r_sort[pa_cumsum > pacrit].min() + r_sort[pa_cumsum < pacrit].max()
+            ) / 2
 
         return Rcall
 
