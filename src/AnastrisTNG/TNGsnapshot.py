@@ -321,9 +321,9 @@ class Basehalo(SubSnap):
         if isinstance(cen, type(None)):
             cen = self.center(mode='ssc')
         try:
-            R = virial_radius(self, cen=cen, overden=overden, rho_def=rho_def, r_max=2*self['r'].max())
+            R = virial_radius(self, cen=cen, overden=overden, rho_def=rho_def, r_max=self['r'].max())
         except:
-            print(r'It is so weird. Rvir > 2r_max, use 5xr_max calculate it')
+            print(r'It is so weird. Rvir > r_max, use 5xr_max to calculate it')
             R = virial_radius(self, cen=cen, overden=overden, rho_def=rho_def, r_max=5*self['r'].max())
         return R
 

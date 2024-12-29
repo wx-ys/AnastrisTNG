@@ -1,7 +1,6 @@
 '''
 Some useful tools
 find tracers: findtracer_MP(), findtracer(), Function.
-star both pos: Star_birth(), Class.
 potential: cal_potential, cal_acceleration, Function.
 galaxy profile: single: profile(), all: Profile_1D(). Class.
 ...
