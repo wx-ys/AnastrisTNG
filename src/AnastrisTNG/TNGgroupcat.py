@@ -231,12 +231,12 @@ def get_eps_Mdm(Snapshot):
         'TNG50-2': [0.78, 2.5e6 / 1e10],
         'TNG50-3': [1.56, 2e7 / 1e10],
         'TNG50-4': [3.12, 1.6e8 / 1e10],
-        'TNG100-1': [1, 5.1e6 / 1e10],
-        'TNG100-2': [2, 4e7 / 1e10],
-        'TNG100-3': [4, 3.2e8 / 1e10],
-        'TNG300-1': [2, 4e7 / 1e10],
-        'TNG300-1': [4, 3.2e8 / 1e10],
-        'TNG300-1': [8, 2.5e9 / 1e10],
+        'TNG100-1': [1., 5.1e6 / 1e10],
+        'TNG100-2': [2., 4e7 / 1e10],
+        'TNG100-3': [4., 3.2e8 / 1e10],
+        'TNG300-1': [2., 4e7 / 1e10],
+        'TNG300-1': [4., 3.2e8 / 1e10],
+        'TNG300-1': [8., 2.5e9 / 1e10],
     }
 
     if Snapshot.properties['z'] > 1:
@@ -247,7 +247,7 @@ def get_eps_Mdm(Snapshot):
         )
     else:
         return SimArray(
-            MatchRun[Snapshot.properties['run']][0] / 2, units.kpc / units.h
+            MatchRun[Snapshot.properties['run']][0] / 2., units.kpc / units.h
         ), SimArray(
             MatchRun[Snapshot.properties['run']][1], 1e10 * units.Msol / units.h
         )
