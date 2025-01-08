@@ -9,7 +9,7 @@ with open('requirements.txt') as f:
 
 setuptools.setup(
     name = "AnastrisTNG",
-    version = "1.2.0",
+    version = "2.0.0",
     author = "Shuai Lu",
     author_email = "lushuai@stu.xmu.edu.cn",
     description = "IllustrisTNG simulation data analysis",
@@ -24,7 +24,7 @@ setuptools.setup(
     license = 'MIT',
     packages = setuptools.find_packages(where='src'),
     package_dir = {'': 'src'},
-    python_requires = ">=3.8",
+    python_requires = ">=3.10",
     install_requires = install_requires,
     include_package_data = True,
 )

@@ -296,10 +296,10 @@ class Basehalo(SubSnap):
             return
         
         if shift:
-            self._transform(trans)
+            self.transform(trans)
         else:
             self.shift(pos=-pos_center, vel=-vel_center)
-            self._transform(trans)
+            self.transform(trans)
         if retmatrix:
             return trans
         else:
@@ -591,9 +591,9 @@ class Basehalo(SubSnap):
 
     def transform(self, matrix):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor._transform(matrix)
+            self.ancestor.transform(matrix)
         else:
-            super()._transform(matrix)
+            super().transform(matrix)
             
     def __call_r(
         self, callkeys: str = 'r', frac: float = 0.5, calfor: str = 'star', calpa: str ='mass', **kwargs
@@ -652,11 +652,7 @@ class Basehalo(SubSnap):
         else:
             return True
 
-    def _transform(self, matrix):
-        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor._transform(matrix)
-        else:
-            super()._transform(matrix)
+
 
 
 
