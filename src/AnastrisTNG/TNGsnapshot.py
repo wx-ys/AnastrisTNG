@@ -5,6 +5,7 @@ Derived array for some particle types
 
 import types
 from functools import reduce
+from typing import List
 
 import numpy as np
 from pynbody import units, filt, derived_array
@@ -244,7 +245,7 @@ class Basehalo(SubSnap):
             vel_cen = vel
         self.shift(pos=pos_cen, vel=vel_cen)
 
-    def face_on(self, **kwargs):
+    def face_on(self, **kwargs)-> List:
         """
         Transforms the halo's coordinate system to a 'face-on' view.
 
@@ -264,13 +265,18 @@ class Basehalo(SubSnap):
             - 'baryon', 'baryonic': Uses the combined angular momentum of stars and gas.
         shift : bool, optional
             If True, shifts the halo to its center of mass and adjusts the coordinate system. Default is True.
+        retmatrix, retpos, retvel: bool, default True
+            return rotation matrix, center pos and vel.
         """
     
         mode = kwargs.get('mode', 'ssc')
         shift = kwargs.get('shift', True)
         alignwith = kwargs.get('alignwith', 'all')
         alignmode = kwargs.get('alignmode', 'jz')
-        retmatrix = kwargs.get('retmatrix',False)
+        
+        retmatrix = kwargs.get('retmatrix',True)
+        retpos = kwargs.get('retpos',True)
+        retvel = kwargs.get('retvel',True)
 
         self.check_boundary()
         pos_center = self.center(mode=mode)
@@ -300,10 +306,14 @@ class Basehalo(SubSnap):
         else:
             self.shift(pos=-pos_center, vel=-vel_center)
             self._transform(trans)
+        ret = []
+        if retpos:
+            ret.append(pos_center)
+        if retvel:
+            ret.append(vel_center)
         if retmatrix:
-            return trans
-        else:
-            return
+            ret.append(trans)
+        return ret
 
     def R_vir(self, overden: float = 178, cen=None, rho_def='critical') -> SimArray:
         """
@@ -450,15 +460,15 @@ class Basehalo(SubSnap):
         ) / 2
 
     def R(self, frac: float = 0.5, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
-
+        '''projected radius that contain specific fraction of target something'''
         return self.__call_r('rxy', frac, calfor, calpa, **kwargs)
 
     def r(self, frac: float = 0.5, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
-
+        '''spherical radius that contain specific fraction of target something'''
         return self.__call_r('r', frac, calfor, calpa, **kwargs)
     
     def rho(self, rmax: float, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
-        
+        '''Volume density'''
         rmin = kwargs.get('rmin', None)
         filtbyr = self._sele_family(calfor, rmax=rmax, rmin=rmin)
         pasum = np.array(filtbyr[calpa].sum())
@@ -467,7 +477,7 @@ class Basehalo(SubSnap):
         return SimArray(pasum/pavolume, filtbyr[calpa].units/filtbyr['r'].units**3)
     
     def Sigma(self, Rmax: float, calfor: str = 'star', calpa: str = 'mass', **kwargs) -> SimArray:
-        
+        '''Surface density'''
         Rmin = kwargs.get('Rmin', None)
         zmax = kwargs.get('zmax', None)
         filtbyr = self._sele_family(calfor, Rmax=Rmax, Rmin=Rmin, zmax=zmax)
@@ -475,6 +485,10 @@ class Basehalo(SubSnap):
         paarea = np.pi*(Rmax**2 - Rmin**2) if Rmin else np.pi*Rmax**2
         
         return SimArray(pasum/paarea, filtbyr[calpa].units/filtbyr['rxy'].units**2)
+    
+    def sum(self, calfor: str= 'star', calpa: str = 'mass', **kwargs) -> SimArray:
+        '''sum of something'''
+        return np.sum(self._sele_family(calfor, **kwargs)[calpa])
     
     def check_boundary(self):
         """
