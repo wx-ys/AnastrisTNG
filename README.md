@@ -3,7 +3,7 @@ AnastrisTNG is a python package for processing and analyzing the cosmological si
 
 ## Installation
 
-Python version >= 3.10:
+Python version >= 3.8:
 ```
 git clone https://github.com/wx-ys/AnastrisTNG.git
 ```
