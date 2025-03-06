@@ -27,7 +27,7 @@ AnastrisTNG uses the following python packages:
 ## Feature
 
 
-* __Supports TNG50, TNG100 and TNG300, including all data units.__
+* __Supports TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**, including all data units.__
 
 * __Quickly explore galaxy evolution history, merger history, halo evolution history.__
 

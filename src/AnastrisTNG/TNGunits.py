@@ -18,6 +18,7 @@ illustrisTNGruns = [
     'TNG300-1',
     'TNG300-2',
     'TNG300-3',
+    'TNG-Cluster'
 ]
 
 # Define common units used in TNG simulations
@@ -243,6 +244,15 @@ def snapshot_units(
         / (0.978 * units.Gyr / units.h) ** 2,
         'BH_Progs': UnitNo,
         'BH_U': (UnitVel) ** 2,
+        'AllowRefinement': UnitNo,
+        'BH_WindCount': UnitNo,
+        'BH_WindTimes': UnitNo,
+        'BH_MPB_CumEgyLow': UnitMass
+        * (UnitComvingLength) ** 2
+        / (0.978 * units.Gyr / units.h) ** 2,
+        'BH_MPB_CumEgyHigh': UnitMass
+        * (UnitComvingLength) ** 2
+        / (0.978 * units.Gyr / units.h) ** 2,
     }
     if field in Matchfieldunits:
         return Matchfieldunits[field]
@@ -301,6 +311,14 @@ def groupcat_units(
         'Group_R_Crit500': UnitComvingLength,
         'Group_R_Mean200': UnitComvingLength,
         'Group_R_TopHat200': UnitComvingLength,
+        
+        #TNG-Cluster 
+        'GroupContaminationFracByMass': UnitNo,
+        'GroupContaminationFracByNumPart': UnitNo,
+        'GroupOrigHaloID': UnitNo,
+        'GroupPrimaryZoomTarget': UnitNo,
+        'GroupOffsetType': UnitNo,
+        
         ### subhalo properties
         'SubhaloFlag': UnitNo,
         'SubhaloBHMass': UnitMass,
@@ -353,6 +371,16 @@ def groupcat_units(
         'SubhaloVmax': UnitVel,
         'SubhaloVmaxRad': UnitComvingLength,
         'SubhaloWindMass': UnitMass,
+        
+        #TNG-Cluster
+        'SubhaloOrigHaloID': UnitNo,
+        'SubhaloOffsetType': UnitNo,
+        
+        #TNG-Cluster Snap 99 only
+        'TracerLengthType': UnitNo,
+        'TracerOffsetType': UnitNo,
+        'SubhaloLengthType': UnitNo,
+        'SubhaloOffsetType': UnitNo,
     }
     if field in Matchfieldunits:
         return Matchfieldunits[field]
@@ -403,6 +431,7 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
         'SubfindHsml': '''The comoving radius of the sphere centered on this cell enclosing the 64±1 nearest dark matter particles.''',
         'SubfindVelDisp': '''The 3D velocity dispersion of all dark matter particles within a radius of SubfindHsml of this cell.''',
         'Velocities': '''Spatial velocity''',
+        'AllowRefinement': '''Flag which takes a value of either 0 or a positive integer. If positive, then this gas cell was part of the high resolution region of the targeted zoom halo. If zero, it was in the low resolution background, and could be considered 'contamination' if found within/near a halo of interest. (Not present in mini snapshots).'''
     }
 
     DM_parameter = {
@@ -463,6 +492,10 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
         'SubfindHsml': '''The comoving radius of the sphere centered on this particle enclosing the 64±1 nearest dark matter particles.''',
         'SubfindVelDisp': '''The 3D velocity dispersion of all dark matter particles within a radius of SubfindHsml of this particle.''',
         'Velocities': '''Spatial velocity.''',
+        'BH_WindCount': '''Number of kinetic feedback events (winds) of this black hole. These correspond to discrete times of energy output while the SMBH is in the low/kinetic feedback mode of the TNG model. This quantity was meant to be accumulated along the main progenitor branch (MPB) of a black hole, but see caveat above.''',
+        'BH_WindTimes': '''Times (i.e. scalefactors) of the last five kinetic feedback events of this black hole. These correspond to discrete times of energy output while the SMBH is in the low/kinetic feedback mode of the TNG model. The events are ordered in time, but the array is rolled/periodic, i.e. the smallest time is not necessarily the first entry. See caveat above about MPB.''',
+        'BH_MPB_CumEgyLow': '''Cumulative amount of kinetic AGN feedback energy injected into surrounding gas in the low accretion-state (wind) mode, total over the entire lifetime of this blackhole. See caveat above about MPB.''',
+        'BH_MPB_CumEgyHigh': '''Cumulative amount of thermal AGN feedback energy injected into surrounding gas in the high accretion-state (quasar) mode, total over the entire lifetime of this blackhole. See caveat above about MPB.'''
     }
 
     FoF_halos = {
@@ -491,6 +524,11 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
         'Group_R_Crit500': '''Comoving Radius of a sphere centered at the GroupPos of this Group whose mean density is 500 times the critical density of the Universe, at the time the halo is considered.''',
         'Group_R_Mean200': '''Comoving Radius of a sphere centered at the GroupPos of this Group whose mean density is 200 times the mean density of the Universe, at the time the halo is considered.''',
         'Group_R_TopHat200': '''Comoving Radius of a sphere centered at the GroupPos of this Group whose mean density is Δc times the critical density of the Universe, at the time the halo is considered.''',
+        'GroupContaminationFracByMass': '''Fraction of 'low resolution contamination', from zero (good) to one (bad), equal to the number of PartType2 particles (low-res DM) divided by the number of PartType1 particles (high-res DM) in this FoF halo. In general, halos (and their subhalos) should only be analyzed if they have zero, or near zero, contamination.''',
+        'GroupContaminationFracByNumPart': '''Fraction of 'low resolution contamination', from zero (good) to one (bad), equal to the mass of PartType2 particles (low-res DM) divided by the mass of PartType1 particles (high-res DM) in this FoF halo. In general, halos (and their subhalos) should only be analyzed if they have zero, or near zero, contamination.''',
+        'GroupOrigHaloID': '''Integer which gives the original FoF halo ID from the parent DMO box from which the TNG-Cluster halos were selected. Ranges from 0 (the most massive halo of the parent box) to 5711 (the least massive halo simulated). Note that each zoom run (i.e. "original FoF halo ID") contains many FoF halos: the primary zoom target, as well as all other halos in the high resolution region / containing high resolution particles. The set of all halos coming from a single zoom run can be chosen as those which have the same GroupOrigHaloID.''',
+        'GroupPrimaryZoomTarget': '''Flag with a value of either zero or one. If one, this was the first (i.e. most massive) FoF halo of an original zoom simulation. At z=0, this is exactly the set of halos that were the original zoom targets. Most analyses of TNG-Cluster will use only the 352 halos with GroupPrimaryZoomTarget > 0. The total number of unity values in this dataset equals the number of unique values of GroupOrigHaloID by definition. At higher redshift, z>0, a complication exists: the first FoF halo of each original zoom does not necessarily correspond to the SubLink main progenitor of the z=0 halo. We therefore flag (the parent groups of) all SubLink main progenitors at z>0 with GroupPrimaryZoomTarget == 2, if not already flagged by unity. At z>0 one can decide, e.g. by looking at contamination, which (or both) of these two sets of halos are appropriate for a given analysis.''',
+        'GroupOffsetType': '''	These are the same "offsets" as in the offsets files, which identify the starting index of member particles of this FoF halo in the snapshot, for a given type. Copied into the group catalogs for convenience (new convention).''',
     }
 
     Subfind_subhalos = {
@@ -545,6 +583,10 @@ def parameter_all_Description(table: str, contents: str, parameters: str) -> str
         'SubhaloVmax': '''Maximum value of the spherically-averaged rotation curve. All available particle types (e.g. gas, stars, DM, and SMBHs) are included in this calculation.''',
         'SubhaloVmaxRad': '''Comoving radius of rotation curve maximum (where Vmax is achieved). As above, all available particle types are used in this calculation.''',
         'SubhaloWindMass': '''Sum of masses of all wind-phase cells in this subhalo (with Type==4 and BirthTime<=0).''',
+        'SubhaloOrigHaloID': '''Integer giving the original FoF halo ID from the parent DMO box from which the TNG-Cluster halos were selected. Exactly the same as GroupOrigHaloID, i.e. all subhalos have the same value of this field as their parent halos.''',
+        'SubhaloOffsetType': '''These are the same "offsets" as in the offsets files, which identify the starting index of member particles of this subhalo in the snapshot, for a given type. Copied into the group catalogs for convenience (new convention).''',
+        'SubhaloOrigHaloID': '''Integer giving the original FoF halo ID from the parent DMO box from which the TNG-Cluster halos were selected. Exactly the same as GroupOrigHaloID, i.e. all subhalos have the same value of this field as their parent halos.''',
+        'SubhaloOffsetType': '''These are the same "offsets" as in the offsets files, which identify the starting index of member particles of this subhalo in the snapshot, for a given type. Copied into the group catalogs for convenience (new convention).''',
     }
     Description = {
         'groupcatalogs': {'halo': FoF_halos, 'subhalo': Subfind_subhalos},

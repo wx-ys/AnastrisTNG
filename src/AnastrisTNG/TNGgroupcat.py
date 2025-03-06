@@ -235,8 +235,9 @@ def get_eps_Mdm(Snapshot):
         'TNG100-2': [2., 4e7 / 1e10],
         'TNG100-3': [4., 3.2e8 / 1e10],
         'TNG300-1': [2., 4e7 / 1e10],
-        'TNG300-1': [4., 3.2e8 / 1e10],
-        'TNG300-1': [8., 2.5e9 / 1e10],
+        'TNG300-2': [4., 3.2e8 / 1e10],
+        'TNG300-3': [8., 2.5e9 / 1e10],
+        'TNG-Cluster':[2, 6.1e7 / 1e10]
     }
 
     if Snapshot.properties['z'] > 1:

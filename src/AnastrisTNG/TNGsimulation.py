@@ -14,6 +14,7 @@ from AnastrisTNG.illustris_python.snapshot import (
     loadSubset,
     loadSubhalo,
     snapPath,
+    loadOriginalZoom
 )
 from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
@@ -465,9 +466,131 @@ class Snapshot(SimSnap):
     ) -> SimSnap:
         '''
         ID: int, halo or subhalo id
-        groupType: str, 'Halo' or 'Subhalo'
+        groupType: str, 'Halo' or 'Subhalo', 'Zoom' for TNG-Cluster
 
         '''
+        
+        if groupType == 'Zoom':
+            subset = getSnapOffsets(self.properties['filedir'], self.snapshot, ID, 'Group')
+
+            # identify original halo ID and corresponding index
+            halo = loadSingle(self.properties['filedir'], self.snapshot, haloID=ID,)
+            assert 'GroupOrigHaloID' in halo, 'Error: loadOriginalZoom() only for the TNG-Cluster simulation.'
+            orig_index = np.where(subset['HaloIDs'] == halo['GroupOrigHaloID'])[0][0]
+            
+            lenType = subset['GroupsTotalLengthByType'][orig_index, :] +subset['OuterFuzzTotalLengthByType'][orig_index, :]
+            order = kwargs.get('order', self.load_particle_para['particle_field'])
+            f = new(
+                dm=int(lenType[1]),
+                star=int(lenType[4]),
+                gas=int(lenType[0]),
+                bh=int(lenType[5]),
+                order=order,
+            )
+
+            for party in self.load_particle_para['particle_field'].split(","):
+                if len(f[get_family(party)]) > 0:
+                    if len(self.load_particle_para[party + '_fields']) > 0:
+                        self.load_particle_para[party + '_fields'] = list(
+                            set(
+                                self.load_particle_para[party + '_fields']
+                                + self.load_particle_para['Basefields']
+                            )
+                        )
+                    else:
+                        self.load_particle_para[party + '_fields'] = list.copy(
+                            self.load_particle_para['Basefields']
+                        )
+                    if party == 'dm':
+                        if 'Masses' in self.load_particle_para[party + '_fields']:
+                            self.load_particle_para[party + '_fields'].remove('Masses')
+                        loaddata = loadOriginalZoom(self.properties['filedir'], self.snapshot, ID, party, self.load_particle_para[party + '_fields'])
+                        for i in self.load_particle_para[party + '_fields']:
+                            f.dm[snapshot_pa_name(i)] = SimArray(
+                                loaddata[i], snapshot_units(i)
+                            )
+                        if 'Masses' in self.load_particle_para['Basefields']:
+                            f.dm['mass'] = self.properties['Mdm'].in_units(
+                                snapshot_units('Masses')
+                            ) * np.ones(len(f.dm))
+                            self.load_particle_para[party + '_fields'].append('Masses')
+                        f.dm[groupType + 'ID'] = SimArray(
+                            ID * np.ones(len(f.dm)).astype(np.int32)
+                        )
+                        if groupType == 'Halo':
+                            f.dm['SubhaloID'] = SimArray(
+                                -1 * np.ones(len(f.dm)).astype(np.int32)
+                            )
+                        else:
+                            f.dm['HaloID'] = SimArray(
+                                -1 * np.ones(len(f.dm)).astype(np.int32)
+                            )
+
+                    if party == 'star':
+                        loaddata = loadOriginalZoom(self.properties['filedir'], self.snapshot, ID, party, self.load_particle_para[party + '_fields'])
+                        for i in self.load_particle_para[party + '_fields']:
+                            f.s[snapshot_pa_name(i)] = SimArray(
+                                loaddata[i], snapshot_units(i)
+                            )
+                        f.s[groupType + 'ID'] = SimArray(
+                            ID * np.ones(len(f.s)).astype(np.int32)
+                        )
+                        if groupType == 'Halo':
+                            f.s['SubhaloID'] = SimArray(
+                                -1 * np.ones(len(f.s)).astype(np.int32)
+                            )
+                        else:
+                            f.s['HaloID'] = SimArray(
+                                -1 * np.ones(len(f.s)).astype(np.int32)
+                            )
+
+                    if party == 'gas':
+                        loaddata =loadOriginalZoom(self.properties['filedir'], self.snapshot, ID, party, self.load_particle_para[party + '_fields'])
+                        for i in self.load_particle_para[party + '_fields']:
+                            f.g[snapshot_pa_name(i)] = SimArray(
+                                loaddata[i], snapshot_units(i)
+                            )
+                        f.g[groupType + 'ID'] = SimArray(
+                            ID * np.ones(len(f.g)).astype(np.int32)
+                        )
+                        if groupType == 'Halo':
+                            f.g['SubhaloID'] = SimArray(
+                                -1 * np.ones(len(f.g)).astype(np.int32)
+                            )
+                        else:
+                            f.g['HaloID'] = SimArray(
+                                -1 * np.ones(len(f.g)).astype(np.int32)
+                            )
+
+                    if party == 'bh':
+                        loaddata = loadOriginalZoom(self.properties['filedir'], self.snapshot, ID, party, self.load_particle_para[party + '_fields'])
+                        for i in self.load_particle_para[party + '_fields']:
+                            f.bh[snapshot_pa_name(i)] = SimArray(
+                                loaddata[i], snapshot_units(i)
+                            )
+                        f.bh[groupType + 'ID'] = SimArray(
+                            ID * np.ones(len(f.bh)).astype(np.int32)
+                        )
+                        if groupType == 'Halo':
+                            f.bh['SubhaloID'] = SimArray(
+                                -1 * np.ones(len(f.bh)).astype(np.int32)
+                            )
+                        else:
+                            f.bh['HaloID'] = SimArray(
+                                -1 * np.ones(len(f.bh)).astype(np.int32)
+                            )
+                        
+            f.properties = deepcopy(self.properties)
+            for i in f.properties:
+                if isinstance(f.properties[i], SimArray):
+                    f.properties[i].sim = f
+            f._filename = self.filename + '_' + groupType + '_' + str(ID)
+            if decorate:
+                return Halo(f)
+            return f
+            
+            
+            
         if groupType == 'Halo':
             subset = getSnapOffsets(
                 self.properties['filedir'], self.snapshot, ID, 'Group'
@@ -478,7 +601,7 @@ class Snapshot(SimSnap):
             )
 
         lenType = subset['lenType']
-        order = kwargs.get('order', self.load_particle_para['particle_field'])
+        order = kwargs.get('order', self.load_particle_para['particle_field'])        
         f = new(
             dm=int(lenType[1]),
             star=int(lenType[4]),

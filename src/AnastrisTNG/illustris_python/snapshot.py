@@ -35,7 +35,7 @@ def getNumPart(header):
     return nPart
 
 
-def loadSubset(basePath, snapNum, partType, fields=None, subset=None, mdi=None, sq=True, float32=False):
+def loadSubset(basePath, snapNum, partType, fields=None, subset=None, mdi=None, sq=False, float32=False):
     """ Load a subset of fields for all particles/cells of a given partType.
         If offset and length specified, load only that subset of the partType.
         If mdi is specified, must be a list of integers of the same length as fields,
