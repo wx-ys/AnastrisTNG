@@ -683,9 +683,15 @@ class Basehalo(SubSnap):
 
     def _transform(self, matrix):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor._transform(matrix)
+            try:
+                self.ancestor._transform(matrix)
+            except:
+                self.ancestor.transform(matrix)
         else:
-            super()._transform(matrix)
+            try:
+                super()._transform(matrix)
+            except:
+                self.ancestor.transform(matrix)
 
 
 

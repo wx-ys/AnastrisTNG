@@ -1,7 +1,7 @@
 h5py
 numba
 numpy
-pynbody >=1.4.0,<2.0.0
+pynbody >=1.4.0
 scipy
 six
 tqdm
