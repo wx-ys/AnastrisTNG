@@ -609,9 +609,15 @@ class Basehalo(SubSnap):
 
     def transform(self, matrix):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor._transform(matrix)
+            try:
+                self.ancestor._transform(matrix)
+            except:
+                self.ancestor.transform(matrix)
         else:
-            super()._transform(matrix)
+            try:
+                super()._transform(matrix)
+            except:
+                super().transform(matrix)
             
     def __call_r(
         self, callkeys: str = 'r', frac: float = 0.5, calfor: str = 'star', calpa: str ='mass', **kwargs
@@ -691,7 +697,7 @@ class Basehalo(SubSnap):
             try:
                 super()._transform(matrix)
             except:
-                self.ancestor.transform(matrix)
+                super().transform(matrix)
 
 
 
