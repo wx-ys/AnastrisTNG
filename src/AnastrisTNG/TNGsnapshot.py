@@ -1068,8 +1068,8 @@ def p(sim):
     The pressure is calculated using the formula:
     P = (2 / 3) * u * rho
     where:
-    - u is the internal energy per unit mass.
-    - rho is the gas density in units of solar masses per cubic kiloparsec (Msol kpc^-3).
+    - u is the internal energy per unit mass.  e.g., InternalEnergy in TNG
+    - rho is the gas density in units of solar masses per cubic kiloparsec (Msol kpc^-3). e.g.,  Density in TNG
     """
     p = sim["u"] * sim["rho"].in_units('Msol kpc^-3') * (2.0 / 3)
     p.convert_units("Pa")

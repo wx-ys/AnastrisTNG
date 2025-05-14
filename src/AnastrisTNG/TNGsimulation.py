@@ -118,41 +118,43 @@ class Snapshot(SimSnap):
         self.__phi.sim = self
         self.__acc = SimArray([0.0, 0.0, 0.0], units.km / units.s**2)
         self.__acc.sim = self
-        __file_pa = h5py.File(snapPath(BasePath, Snap), 'r')
-        __halo_pa = list(loadSingle(BasePath, Snap, haloID=1).keys())
-        __subhalo_pa = list(loadSingle(BasePath, Snap, subhaloID=1).keys())
-        self.loadable_parameters = {
+        with h5py.File(snapPath(BasePath, Snap), 'r') as __file_pa:
+            __halo_pa = list(loadSingle(BasePath, Snap, haloID=1).keys())
+            __subhalo_pa = list(loadSingle(BasePath, Snap, subhaloID=1).keys())
+            self.loadable_parameters = {
             'groupcatalogs': {
                 'halo': {
-                    x: parameter_all_Description('groupcatalogs', 'halo', x)
-                    for x in __halo_pa
+                x: parameter_all_Description('groupcatalogs', 'halo', x)
+                for x in __halo_pa
                 },
                 'subhalo': {
-                    x: parameter_all_Description('groupcatalogs', 'subhalo', x)
-                    for x in __subhalo_pa
+                # Retrieve a description of the parameter for the specified group catalog and subhalo.
+                x: parameter_all_Description('groupcatalogs', 'subhalo', x)
+                for x in __subhalo_pa
                 },
             },
-            'snapshots': {
-                'gas': {
-                    x: parameter_all_Description('snapshots', 'gas', x)
-                    for x in list(__file_pa['PartType0'].keys())
-                },
-                'star': {
-                    x: parameter_all_Description('snapshots', 'star', x)
-                    for x in list(__file_pa['PartType4'].keys())
-                },
-                'dm': {
-                    x: parameter_all_Description('snapshots', 'dm', x)
-                    for x in list(__file_pa['PartType1'].keys())
-                },
-                'bh': {
-                    x: parameter_all_Description('snapshots', 'bh', x)
-                    for x in list(__file_pa['PartType5'].keys())
-                },
-            },
-        }
-        __file_pa.close()
-
+            'snapshots': {},
+            }
+            if 'PartType0' in __file_pa:
+                self.loadable_parameters['snapshots']['gas'] = {
+                x: parameter_all_Description('snapshots', 'gas', x)
+                for x in list(__file_pa['PartType0'].keys())
+            }
+            if 'PartType4' in __file_pa:
+                self.loadable_parameters['snapshots']['star'] = {
+                x: parameter_all_Description('snapshots', 'star', x)
+                for x in list(__file_pa['PartType4'].keys())
+            }
+            if 'PartType1' in __file_pa:
+                self.loadable_parameters['snapshots']['dm'] = {
+                x: parameter_all_Description('snapshots', 'dm', x)
+                for x in list(__file_pa['PartType1'].keys())
+            }
+            if 'PartType5' in __file_pa:
+                self.loadable_parameters['snapshots']['bh'] = {
+                x: parameter_all_Description('snapshots', 'bh', x)
+                for x in list(__file_pa['PartType5'].keys())
+            }
     @staticmethod
     def parameter_describe(table: str, contents: str, parameters: str) -> str:
         '''
