@@ -23,7 +23,16 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-    - name: test install pynbody
+        # requirements.txt should contain numpy, cython, etc.
+    - name: Test pynbody installation on Python 3.8
+      if: matrix.python-version == '3.8'
+      run: |
+        pip install -r requirements.txt
+        pip install --no-build-isolation pynbody
+        pip uninstall pynbody -y
+
+    - name: Test pynbody installation on other Python versions
+      if: matrix.python-version != '3.8'
       run: |
         pip install pynbody
         pip uninstall pynbody -y
