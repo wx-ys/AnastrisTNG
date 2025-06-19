@@ -14,6 +14,19 @@ Install this in editable mode.
 cd AnastrisTNG
 pip install -e .
 ```
+
+**Note for Python 3.8:**
+Due to compatibility issues, directly using `pip install pynbody` may fail. To install pynbody successfully on Python 3.8:
+```
+pip install --upgrade pip setuptools wheel
+pip install "numpy<1.26" "cython<3.0"
+pip install --no-build-isolation pynbody
+```
+Then install AnastrisTNG:
+```
+pip install -e .
+```
+
 AnastrisTNG uses the following python packages:
 
 * numpy, scipy
