@@ -27,6 +27,7 @@ jobs:
     - name: Test pynbody installation on Python 3.8
       if: matrix.python-version == '3.8'
       run: |
+        pip install --upgrade pip setuptools wheel
         pip install "numpy<1.22" "cython<3.0"
         pip install --no-build-isolation pynbody
         pip uninstall pynbody -y
