@@ -55,6 +55,19 @@ jobs:
         # Show what changed
         echo "Packages that were added:"
         comm -13 initial_requirements.txt current_requirements.txt || true
+    
+
+    - name: Revert to initial requirements
+      run: |
+      
+        pip uninstall -r current_requirements.txt -y || true
+        # Reinstall only the initial packages
+        pip install -r initial_requirements.txt
+        # Clean up temp file
+        rm current_requirements.txt
+        # Verify reversion
+        echo "Environment reverted to initial state:"
+        pip list
 
     - name: Install package
       run: pip install .
