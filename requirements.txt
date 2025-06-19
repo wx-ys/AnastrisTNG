@@ -5,3 +5,4 @@ pynbody >=1.4.0
 scipy
 six
 tqdm
+Cython<=0.29.35 ; python_version == "3.8"
