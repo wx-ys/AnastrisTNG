@@ -23,13 +23,38 @@ jobs:
       with:
         python-version: ${{ matrix.python-version }}
     
-        # requirements.txt should contain numpy, cython, etc.
+    # Save initial pip state
+    - name: Save initial pip state
+      run: pip freeze > initial_requirements.txt
+    
+    - name: Test pynbody installation on Python 3.8
+      if: matrix.python-version == '3.8'
+      run: |
+        pip install --upgrade pip setuptools wheel
+        pip install "numpy<1.22" "cython<3.0"
+        pip install pynbody
+        # Test that pynbody works
+        python -c "import pynbody; print('pynbody installation successful')"
+        # Clean up pynbody and its dependencies
+        pip uninstall pynbody -y
+        pip uninstall cython -y
 
     - name: Test pynbody installation on other Python versions
       if: matrix.python-version != '3.8'
       run: |
         pip install pynbody
+        # Test that pynbody works
+        python -c "import pynbody; print('pynbody installation successful')"
+        # Clean up pynbody
         pip uninstall pynbody -y
+
+    # Optional: Full environment reversion
+    - name: Revert to initial pip state (optional)
+      run: |
+        pip freeze > current_requirements.txt
+        # Show what changed
+        echo "Packages that were added:"
+        comm -13 initial_requirements.txt current_requirements.txt || true
 
     - name: Install package
       run: pip install .
