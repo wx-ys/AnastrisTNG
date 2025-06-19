@@ -32,7 +32,7 @@ jobs:
       run: |
         pip install --upgrade pip setuptools wheel
         pip install "numpy<1.22" "cython<3.0"
-        pip install pynbody
+        pip install --no-build-isolation pynbody
         # Test that pynbody works
         python -c "import pynbody; print('pynbody installation successful')"
         # Clean up pynbody and its dependencies
