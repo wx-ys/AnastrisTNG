@@ -27,7 +27,7 @@ jobs:
       if: matrix.python-version == '3.8'
       run: |
         pip install --upgrade pip setuptools wheel
-        pip install "numpy<1.22" "cython<3.0"
+        pip install "numpy<1.23" "cython<3.0"
         pip install --no-build-isolation pynbody
         pip install .
         python -c "import AnastrisTNG; print('AnastrisTNG installation successful')"
