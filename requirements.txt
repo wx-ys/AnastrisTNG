@@ -6,4 +6,4 @@ scipy
 six
 tqdm
 Cython<=0.29.35; python_version == "3.8"
-numpy>=1.21.6,<1.22; python_version == "3.8"
+numpy>=1.21.6,<1.26; python_version == "3.8"
