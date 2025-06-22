@@ -347,6 +347,15 @@ def omega(p):
     prof.convert_units('km s**-1 kpc**-1')
     return prof
 
+# a fix for pynbody kappa
+@Profile.profile_property
+def kappa(pro):
+    """Radial frequency kappa = sqrt(R dOmega^2/dR + 4 Omega^2) (see Binney & Tremaine Sect. 3.2) in the z=0 plane"""
+    dOmega2dR = (np.gradient(pro['omega'] ** 2) / np.gradient(pro['rbins'])).view(SimArray)  
+    dOmega2dR.sim = pro.sim
+    dOmega2dR.units = pro['omega'].units ** 2 / pro['rbins'].units
+    return np.sqrt(pro['rbins'] * dOmega2dR + 4 * pro['omega'] ** 2)
+
 class Profile_1D:
     _properties={}
     def __init__(
