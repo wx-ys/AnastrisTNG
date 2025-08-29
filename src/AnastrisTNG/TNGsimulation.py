@@ -641,9 +641,9 @@ class Snapshot(SimSnap):
                             loaddata[i], snapshot_units(i)
                         )
                     if 'Masses' in self.load_particle_para['Basefields']:
-                        f.dm['mass'] = self.properties['Mdm'].in_units(
+                        f.dm['mass'] = SimArray(self.properties['Mdm'].in_units(
                             snapshot_units('Masses')
-                        ) * np.ones(len(f.dm))
+                        ) * np.ones(len(f.dm)), snapshot_units('Masses')) 
                         self.load_particle_para[party + '_fields'].append('Masses')
                     f.dm[groupType + 'ID'] = SimArray(
                         ID * np.ones(len(f.dm)).astype(np.int32)
