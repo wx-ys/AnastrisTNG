@@ -591,33 +591,33 @@ class Basehalo(SubSnap):
 
     def rotate_x(self, angle):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor.rotate_x(angle)
+            return self.ancestor.rotate_x(angle)
         else:
-            super().rotate_x(angle)
+            return super().rotate_x(angle)
 
     def rotate_y(self, angle):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor.rotate_y(angle)
+            return self.ancestor.rotate_y(angle)
         else:
-            super().rotate_y(angle)
+            return super().rotate_y(angle)
 
     def rotate_z(self, angle):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor.rotate_z(angle)
+            return self.ancestor.rotate_z(angle)
         else:
-            super().rotate_z(angle)
+            return super().rotate_z(angle)
 
     def transform(self, matrix):
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
             try:
-                self.ancestor._transform(matrix)
+                return self.ancestor._transform(matrix)
             except:
-                self.ancestor.transform(matrix)
+                return self.ancestor.transform(matrix)
         else:
             try:
-                super()._transform(matrix)
+                return super()._transform(matrix)
             except:
-                super().transform(matrix)
+                return super().transform(matrix)
             
     def __call_r(
         self, callkeys: str = 'r', frac: float = 0.5, calfor: str = 'star', calpa: str ='mass', **kwargs
