@@ -490,26 +490,25 @@ class Basehalo(SubSnap):
         '''sum of something'''
         return np.sum(self._sele_family(calfor, **kwargs)[calpa])
     
-    def check_boundary(self):
+    def check_boundary(self) -> bool:
         """
         Check if any particle lay on the edge of the box.
         """
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
-            self.ancestor.check_boundary()
-            return
+            return self.ancestor.check_boundary()
         if (self['x'].max() - self['x'].min()) > (self.boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
-            return
+            return True
         if (self['y'].max() - self['y'].min()) > (self.boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
-            return
+            return True
         if (self['z'].max() - self['z'].min()) > (self.boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
-            return
-        return
+            return True
+        return False
 
     def shift(self, pos: SimArray = None, vel: SimArray = None, phi: SimArray = None):
         '''
