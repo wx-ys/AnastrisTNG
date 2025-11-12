@@ -79,7 +79,12 @@ sub.physical_units() #in physical unit
 sub.face_on(alignwith='star',rmax=8) # Align face-on by stellar angular momentum within 8 kpc
 ```
 
-See [examples](examples) for more details,
+See [examples](examples) for more:
+- [quick_start](examples/AnastrisTNG_quick_start-cn.ipynb): quick-start guide
+- [galaxy_face_on](examples/AnastrisTNG_galaxy_face_on-cn.ipynb): extract a galaxy, align face-on, and plot images
+- [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): useful galaxy function usage
+- [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): radial profile analysis
+- [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): galaxy evolution and merger history
 
 ## Maintainers
 
