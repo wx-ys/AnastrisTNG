@@ -296,7 +296,7 @@ class Basehalo(SubSnap):
                 return
         elif alignmode == 'moi':
             self.shift(pos=pos_center, vel=vel_center)
-            trans = self.moi_shape(calfor = alignwith, calpa = 'mass', nbins=1)[3]
+            trans = self.moi_shape(calfor = alignwith, calpa = 'mass', nbins=1)['rotations']
         else:
             print('No such alignmode')
             return
