@@ -1263,15 +1263,17 @@ def read_Snap_properties(f, SnapshotHeader):
 
     f['a'] = SnapshotHeader['Time']                 # Scale factor (time)
     f['z'] = (1 / SnapshotHeader['Time']) - 1       # Redshift
-    f['omegaM0'] = SnapshotHeader['Omega0']         # Matter density parameter.
-    f['omegaL0'] = SnapshotHeader['OmegaLambda']    # Dark energy density parameter.
     if "TNG" in f['run']:
         f['h'] = SnapshotHeader['HubbleParam']          # Hubble parameter.
+        f['omegaM0'] = SnapshotHeader['Omega0']         # Matter density parameter.
+        f['omegaL0'] = SnapshotHeader['OmegaLambda']    # Dark energy density parameter.
         f['omegaB0'] = 0.0486                           # Baryon density parameter (fixed value).
         f['sigma8'] = 0.8159                            # Amplitude of matter density fluctuations (fixed value).
         f['ns'] = 0.9667                                # Spectral index (fixed value).
     elif "Illustris" in f['run']:
         f['h'] = 0.704
+        f['omegaM0'] = 0.2726
+        f['omegaL0'] = 0.7274
         f['omegaB0'] = 0.0456                           # Baryon density parameter (fixed value).
         f['sigma8'] = 0.809                          # Amplitude of matter density fluctuations (fixed value).
         f['ns'] = 0.963                               # Spectral index (fixed value).
