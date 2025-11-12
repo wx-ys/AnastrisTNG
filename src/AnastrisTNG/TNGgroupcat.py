@@ -227,6 +227,9 @@ def get_eps_Mdm(Snapshot):
     Data is sourced from https://www.tng-project.org/data/docs/background/.
     """
     MatchRun = {
+        'Illustris-1': [1., 0.000440896524361096],
+        'Illustris-2': [2., 0.00352717219488877],
+        'Illustris-3': [3., 0.0282173775591101],
         'TNG50-1': [0.39, 3.1e5 / 1e10],
         'TNG50-2': [0.78, 2.5e6 / 1e10],
         'TNG50-3': [1.56, 2e7 / 1e10],

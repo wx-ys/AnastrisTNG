@@ -71,8 +71,6 @@ class Snapshot(SimSnap):
         self._family_slice[get_family('bh')] = slice(0, 0)
         self._decorate()
         self.__set_Snapshot_property(BasePath, Snap)
-        self.properties['filedir'] = BasePath
-        self.properties['filepath'] = BasePath
         self._filename = self.properties['run']
 
         self.properties['eps'], self.properties['Mdm'] = get_eps_Mdm(self)
@@ -836,11 +834,12 @@ class Snapshot(SimSnap):
 
         SnapshotHeader = loadHeader(BasePath, Snap)
         self.properties = SimDict()
+        self.properties['filedir'] = BasePath
+        self.properties['filepath'] = BasePath
         self.properties['read_Snap_properties'] = SnapshotHeader
         for i in self.properties:
             if 'sim' in dir(self.properties[i]):
                 self.properties[i].sim = self
-        self.properties['filedir'] = BasePath
         self.properties['Snapshot'] = Snap
 
     def __set_load_particle(self):

@@ -8,6 +8,9 @@ import numpy as np
 # Define a list of IllustrisTNG simulation runs available for analysis
 # global illustrisTNGruns
 illustrisTNGruns = [
+    'Illustris-1',
+    'Illustris-2',
+    'Illustris-3',
     'TNG50-1',
     'TNG50-2',
     'TNG50-3',
@@ -205,6 +208,9 @@ def snapshot_units(
         * (units.a * units.kpc) ** (-5, 2),
         'Masses': (UnitMass),
         'NeutralHydrogenAbundance': UnitNo,
+        'NumTracers': UnitNo, # for Illustris
+        'SmoothingLength': UnitComvingLength,   # for Illustris
+        'Volume': (UnitComvingLength) ** 3, # for Illustris
         'ParticleIDs': UnitNo,
         'Potential': (UnitVel) ** 2 / units.a,
         'StarFormationRate': units.Msol / units.yr,
@@ -230,10 +236,13 @@ def snapshot_units(
         'BH_CumEgyInjection_RM': UnitMass
         * (UnitComvingLength) ** 2
         / (0.978 * units.Gyr / units.h) ** 2,
+        'BH_Mass_bubbles': UnitMass, # for Illustris
+        'BH_Mass_ini': UnitMass, # for Illustris
         'BH_CumMassGrowth_QM': UnitMass,
         'BH_CumMassGrowth_RM': UnitMass,
         'BH_Density': UnitMass / (UnitComvingLength) ** 3,
         'BH_HostHaloMass': UnitMass,
+        'HostHaloMass': UnitMass, # for Illustris
         'BH_Hsml': UnitComvingLength,
         'BH_Mass': UnitMass,
         'BH_Mdot': UnitMassdTime,

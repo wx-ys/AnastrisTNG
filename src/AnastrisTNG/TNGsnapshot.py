@@ -1248,6 +1248,17 @@ def read_Snap_properties(f, SnapshotHeader):
       - sigma8 (Amplitude of matter density fluctuations): 0.8159
       - ns (Spectral index of primordial fluctuations): 0.9667
       - h (Hubble parameter): 0.6774
+
+    Cosmological Model (Illustris runs):
+    -------------------------------
+    - Standard ΛCDM model based on Planck 2013 results:
+      - omegaL0 (Dark Energy density parameter): 0.7274
+      - omegaM0 (Matter density parameter): 0.2726
+      - omegaB0 (Baryon density parameter): 0.0456
+      - sigma8 (Amplitude of matter density fluctuations): 0.809
+      - ns (Spectral index of primordial fluctuations): 0.963
+      - h (Hubble parameter): 0.704
+    # from https://arxiv.org/abs/1405.1418
     """
 
     f['a'] = SnapshotHeader['Time']                 # Scale factor (time)
@@ -1255,9 +1266,16 @@ def read_Snap_properties(f, SnapshotHeader):
     f['h'] = SnapshotHeader['HubbleParam']          # Hubble parameter.
     f['omegaM0'] = SnapshotHeader['Omega0']         # Matter density parameter.
     f['omegaL0'] = SnapshotHeader['OmegaLambda']    # Dark energy density parameter.
-    f['omegaB0'] = 0.0486                           # Baryon density parameter (fixed value).
-    f['sigma8'] = 0.8159                            # Amplitude of matter density fluctuations (fixed value).
-    f['ns'] = 0.9667                                # Spectral index (fixed value).
+    if "TNG" in f['run']:
+        f['omegaB0'] = 0.0486                           # Baryon density parameter (fixed value).
+        f['sigma8'] = 0.8159                            # Amplitude of matter density fluctuations (fixed value).
+        f['ns'] = 0.9667                                # Spectral index (fixed value).
+    elif "Illustris" in f['run']:
+        f['omegaB0'] = 0.0456                           # Baryon density parameter (fixed value).
+        f['sigma8'] = 0.809                          # Amplitude of matter density fluctuations (fixed value).
+        f['ns'] = 0.963                               # Spectral index (fixed value).
+    else:
+        raise ValueError("Unknown run type in 'run' property")
     f['boxsize'] = SimArray(                        # Size of the simulation box (in kpc)
         1.0, SnapshotHeader['BoxSize'] * units.kpc * units.a / units.h
     )
