@@ -626,7 +626,7 @@ class Star_birth(Basehalo):
         distance = Birthpos - galapos
         
         # deal with periodic boundary
-        boxsize = Snap.boxsize.in_units('a kpc').view(np.ndarray)
+        boxsize = Snap.boxsize.in_units('a kpc', **Snap.conversion_context()).view(np.ndarray)
         
         distance[distance < -boxsize/2] = distance[distance < -boxsize/2] +boxsize
         distance[distance > boxsize/2] = distance[distance > boxsize/2] -boxsize

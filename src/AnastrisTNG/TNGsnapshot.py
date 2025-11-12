@@ -83,7 +83,7 @@ class Basehalo(SubSnap):
                     except units.UnitsException:
                         continue
                     new_unit = reduce(
-                        lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:])]
+                        lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:urc])]
                     )
                     new_unit *= v.ratio(new_unit, **self.conversion_context())
                     self.properties[k] = new_unit
@@ -494,17 +494,18 @@ class Basehalo(SubSnap):
         """
         Check if any particle lay on the edge of the box.
         """
+        boxsize = self.properties['boxsize'].in_units(self['pos'].units, **self.conversion_context())
         if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
             return self.ancestor.check_boundary()
-        if (self['x'].max() - self['x'].min()) > (self.boxsize / 2):
+        if (self['x'].max() - self['x'].min()) > (boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
             return True
-        if (self['y'].max() - self['y'].min()) > (self.boxsize / 2):
+        if (self['y'].max() - self['y'].min()) > (boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
             return True
-        if (self['z'].max() - self['z'].min()) > (self.boxsize / 2):
+        if (self['z'].max() - self['z'].min()) > (boxsize / 2):
             print('On the edge of the box, move to center')
             self.wrap()
             return True
@@ -1279,9 +1280,7 @@ def read_Snap_properties(f, SnapshotHeader):
         f['ns'] = 0.963                               # Spectral index (fixed value).
     else:
         raise ValueError("Unknown run type in 'run' property")
-    f['boxsize'] = SimArray(                        # Size of the simulation box (in kpc)
-        1.0, SnapshotHeader['BoxSize'] * units.kpc * units.a / units.h
-    )
+    f['boxsize'] = SnapshotHeader['BoxSize'] * units.kpc * units.a / units.h                        # Size of the simulation box (in kpc)
     f['Halos_total'] = SnapshotHeader['Ngroups_Total']          # Total number of halos in the snapshot.
     f['Subhalos_total'] = SnapshotHeader['Nsubgroups_Total']    # Total number of subhalos in the snapshot.
 
