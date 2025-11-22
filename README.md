@@ -1,6 +1,10 @@
 ## Introduction
 AnastrisTNG is a python package for processing and analyzing the cosmological simulation [IllustrisTNG](https://www.tng-project.org/).
 It supports Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**.
+ 
+Note: analysis utilities are being migrated and updated in the [pynbody-extras](https://github.com/wx-ys/pynbody-extras) project: https://github.com/wx-ys/pynbody-extras.
+Usage example: `examples/AnastrisTNG_pynext-cn.ipynb`
+
 
 ## Installation
 
@@ -15,8 +19,14 @@ cd AnastrisTNG
 pip install -e .
 ```
 
-**Note for Python 3.8:**
-Due to compatibility issues, directly using `pip install pynbody` may fail. To install pynbody successfully on Python 3.8:
+Recommended dependencies (these are installed automatically when possible):
+- `numpy`, `scipy`, `h5py`, `tqdm`, `six`, `numba`
+- `pynbody >= 1.4.0`
+
+--------
+
+Important note for Python 3.8 users:
+Direct `pip install pynbody` may fail on some systems. If you encounter issues, run:
 ```
 pip install --upgrade pip setuptools wheel
 pip install "numpy<1.26" "cython<3.0"
@@ -27,29 +37,19 @@ Then install AnastrisTNG:
 pip install -e .
 ```
 
-AnastrisTNG uses the following python packages:
-
-* numpy, scipy
-* pynbody >=1.4.0
-* h5py
-* tqdm
-* six
-* numba
-
-
 
 ## Feature
 
 
-* __Supports  Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**, including all data units.__
+* __Supports  Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**, with units handled.__
 
-* __Quickly explore galaxy evolution history, merger history, halo evolution history.__
+* __Rapid exploration of galaxy and halo evolution, including merger trees and histories.__
 
-* __Analyze galactic interactions under the same coordinate system.__
+* __Coordinate-consistent analysis of interacting galaxies.__
 
-* __Analyze groupcatalog, trace gas particles, etc__
+* __GroupCatalog analysis and particle tracing (including gas).__
 
-* __Easy to view the radial and vertical distribution of the constituent properties of galaxies, including 3D properties and 2D projection properties.__
+* __Radial and vertical profile tools for 3D properties and 2D projections.__
 <center>
 <figure>
       <img src="./images/radial_profile.png"  height = "300">
@@ -58,33 +58,35 @@ AnastrisTNG uses the following python packages:
 </figure>
 
 
-* __Quickly (tens of seconds) check galaxy star formation history over time and space (not public; robust version at [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose)). If interested, contact lushuai@stu.xmu.edu.cn.__
+* __Fast (tens of seconds) inspection of spatially-resolved star formation histories (SFH). (not public; robust version at [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose)). If interested, contact lushuai@stu.xmu.edu.cn.__
 ![image](./images/TNG50_SFH_Subhalo_424289.png)
+
 ## Usage
 
-
+Basic example:
 ```python
 from AnastrisTNG import TNGsimulation 
 BasePath = 'filepath'  # Path to simulation data
 snap=99                # Snapshot number
 
-Snapshot=TNGsimulation.Snapshot(BasePath,snap) # use the data of snapshot99
+Snapshot=TNGsimulation.Snapshot(BasePath,snap) # use snapshot 99
 
-Snapshot.load_halo(400)    #load a halo(id=400)
-Snapshot.load_subhalo(8)    #load a subhalo(id=8)
+Snapshot.load_halo(400)     # load halo with ID 400
+Snapshot.load_subhalo(8)    # load subhalo with ID 8
 
-# load a single subhalo
+# load a single subhalo/galaxy (decorate converts to helper object)
 sub = Snapshot.load_particle(ID=10, groupType='Subhalo', decorate=True)
 sub.physical_units() #in physical unit
 sub.face_on(alignwith='star',rmax=8) # Align face-on by stellar angular momentum within 8 kpc
 ```
 
 See [examples](examples) for more:
-- [quick_start](examples/AnastrisTNG_quick_start-cn.ipynb): quick-start guide
-- [galaxy_face_on](examples/AnastrisTNG_galaxy_face_on-cn.ipynb): extract a galaxy, align face-on, and plot images
-- [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): useful galaxy function usage
-- [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): radial profile analysis
-- [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): galaxy evolution and merger history
+- [quick_start](examples/AnastrisTNG_quick_start-cn.ipynb): Quick start
+- [galaxy_face_on](examples/AnastrisTNG_galaxy_face_on-cn.ipynb): Extract, align, and image a galaxy
+- [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): Utility functions
+- [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): Radial profile analysis
+- [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): Galaxy evolution and merger history
+- [pynbody-extras](examples/AnastrisTNG_pynext-cn.ipynb): Example using `pynbody-extras` utilities
 
 ## Maintainers
 
