@@ -27,19 +27,20 @@ Recommended dependencies (these are installed automatically when possible):
 - `numpy`, `scipy`, `h5py`, `tqdm`, `six`, `numba`
 - `pynbody >= 1.4.0`
 
---------
 
-Important note for Python 3.8 users:
-Direct `pip install pynbody` may fail on some systems. If you encounter issues, run:
-```
-pip install --upgrade pip setuptools wheel
-pip install "numpy<1.26" "cython<3.0"
-pip install --no-build-isolation pynbody
-```
-Then install AnastrisTNG:
-```
-pip install -e .
-```
+>[!NOTE]
+>for Python 3.8 users:
+>Direct `pip install pynbody` may fail on some systems. If you encounter issues, run:
+>
+> ```bash
+> pip install --upgrade pip setuptools wheel
+> pip install "numpy<1.26" "cython<3.0"
+> pip install --no-build-isolation pynbody
+> ```
+> Then install AnastrisTNG:
+> ```bash
+> pip install -e .
+> ```
 
 
 ## Features
