@@ -408,7 +408,10 @@ class Snapshot(SimSnap):
                 fields=['ParticleIDs'],
             )
             if isinstance(thiID, dict):
-                continue
+                if thiID['count'] > 0:
+                    thiID = thiID['ParticleIDs']
+                else:
+                    continue
             parID = np.append(parID, thiID)
         parID.astype(np.uint64)
         self['SubhaloID'][np.isin(self['iord'], parID)] = subhaloID
