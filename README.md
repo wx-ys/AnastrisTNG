@@ -2,9 +2,13 @@
 AnastrisTNG is a python package for processing and analyzing the cosmological simulation [IllustrisTNG](https://www.tng-project.org/).
 It supports Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**.
  
-Note: analysis utilities are being migrated and updated in the [pynbody-extras](https://github.com/wx-ys/pynbody-extras) project: https://github.com/wx-ys/pynbody-extras.
-Usage example: `examples/AnastrisTNG_pynext-cn.ipynb`
 
+>[!NOTE]
+>analysis utilities are being migrated and updated in the [pynbody-extras](https://github.com/wx-ys/pynbody-extras) project: https://github.com/wx-ys/pynbody-extras.
+>Usage example: `examples/AnastrisTNG_pynext-cn.ipynb`
+>
+>spatially-resolved star formation history tools in the [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose) project: https://github.com/GalaxySimAnalytics/GalaxyPose
+>Usage example: `examples/AnastrisTNG_galpos_SFH-cn.ipynb`
 
 ## Installation
 
@@ -38,7 +42,7 @@ pip install -e .
 ```
 
 
-## Feature
+## Features
 
 
 * __Supports  Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**, with units handled.__
@@ -50,12 +54,11 @@ pip install -e .
 * __GroupCatalog analysis and particle tracing (including gas).__
 
 * __Radial and vertical profile tools for 3D properties and 2D projections.__
+
 <center>
-<figure>
       <img src="./images/radial_profile.png"  height = "300">
       <img src="./images/vertical_profile.png" height = "300">
 </center>
-</figure>
 
 
 * __Fast (tens of seconds) inspection of spatially-resolved star formation histories (SFH). (not public; robust version at [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose)). If interested, contact lushuai@stu.xmu.edu.cn.__
@@ -76,7 +79,7 @@ Snapshot.load_subhalo(8)    # load subhalo with ID 8
 
 # load a single subhalo/galaxy (decorate converts to helper object)
 sub = Snapshot.load_particle(ID=10, groupType='Subhalo', decorate=True)
-sub.physical_units() #in physical unit
+sub.physical_units() #in physical units
 sub.face_on(alignwith='star',rmax=8) # Align face-on by stellar angular momentum within 8 kpc
 ```
 
@@ -86,6 +89,7 @@ See [examples](examples) for more:
 - [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): Utility functions
 - [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): Radial profile analysis
 - [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): Galaxy evolution and merger history
+- [galpos_SFH](examples/AnastrisTNG_galpos_SFH-cn.ipynb): Spatially-resolved star formation history with GalaxyPose
 - [pynbody-extras](examples/AnastrisTNG_pynext-cn.ipynb): Example using `pynbody-extras` utilities
 
 ## Maintainers
