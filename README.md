@@ -54,7 +54,6 @@ pip install -e .
 * __GroupCatalog analysis and particle tracing (including gas).__
 
 * __Radial and vertical profile tools for 3D properties and 2D projections.__
-
 <center>
       <img src="./images/radial_profile.png"  height = "300">
       <img src="./images/vertical_profile.png" height = "300">
