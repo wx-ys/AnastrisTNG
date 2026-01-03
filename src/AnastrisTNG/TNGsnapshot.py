@@ -3,12 +3,11 @@ Basehalo for subhalo and halo
 Derived array for some particle types
 '''
 
-import types
 from functools import reduce
 from typing import List
 
 import numpy as np
-from pynbody import units, filt, derived_array
+from pynbody import units, filt, derived_array, config
 from pynbody.family import get_family
 from pynbody.simdict import SimDict
 from pynbody.array import SimArray
@@ -19,6 +18,10 @@ from AnastrisTNG.TNGunits import illustrisTNGruns, NotneedtransGCPa
 from AnastrisTNG.pytreegrav import Potential, Accel
 from AnastrisTNG.Anatools import ang_mom, fit_krotmax, MoI_shape
 
+
+def gravity_parallel() -> bool:
+    """ Check if gravity calculations should be run in parallel based on the pynbody configuration."""
+    return config["threading"] in ['True', True, 'true', '1', 1]
 
 class Basehalo(SubSnap):
     """
@@ -759,6 +762,7 @@ def phi(sim):
                 sim.ancestor['pos'].view(np.ndarray),
                 sim.ancestor['mass'].view(np.ndarray),
                 np.repeat(eps, len(sim.ancestor['mass'])).view(np.ndarray),
+                parallel = gravity_parallel(),
             )
             phi = SimArray(
                 pot, units.G * sim.ancestor['mass'].units / sim.ancestor['pos'].units
@@ -798,6 +802,7 @@ def acc(sim):
                 sim.ancestor['pos'].view(np.ndarray),
                 sim.ancestor['mass'].view(np.ndarray),
                 np.repeat(eps, len(sim.ancestor['mass'])).view(np.ndarray),
+                parallel = gravity_parallel(),
             )
             acc = SimArray(
                 accelr,
