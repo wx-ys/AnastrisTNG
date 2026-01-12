@@ -8,7 +8,7 @@ It supports Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently releas
 >Usage example: `examples/AnastrisTNG_pynext-cn.ipynb`
 >
 >spatially-resolved star formation history tools in the [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose) project: https://github.com/GalaxySimAnalytics/GalaxyPose
->Usage example: `examples/AnastrisTNG_galpos_SFH-cn.ipynb`
+>Usage example: `examples/AnastrisTNG_galpos_SFH-cn.ipynb`, install GalaxyPose with `pip install "galpos"`.
 
 ## Installation
 
@@ -89,7 +89,7 @@ See [examples](examples) for more:
 - [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): Utility functions
 - [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): Radial profile analysis
 - [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): Galaxy evolution and merger history
-- [galpos_SFH](examples/AnastrisTNG_galpos_SFH-cn.ipynb): Spatially-resolved star formation history with GalaxyPose
+- [galpos_SFH](examples/AnastrisTNG_galpos_SFH-cn.ipynb): Spatially-resolved star formation history with GalaxyPose `galpos.decorate`
 - [pynbody-extras](examples/AnastrisTNG_pynext-cn.ipynb): Example using `pynbody-extras` utilities
 
 ## Maintainers
