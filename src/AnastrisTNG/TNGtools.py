@@ -782,9 +782,10 @@ class IDFinder:
         *,
         stop_early: bool = False,
         stop_when_found: int = 0,
+        NP: int = 1,
     ) -> dict:
         """
-        Sequential search across all snapshot chunk files.
+        Search snapshot chunk files for rows whose *id_field* value is in *findID*.
 
         Parameters
         ----------
@@ -798,11 +799,13 @@ class IDFinder:
         stop_early : bool, optional
             When ``True``, stop scanning once ``len(findID)`` matches have
             been found (assumes a 1-to-1 ID mapping, e.g. TracerID lookup).
-            Default ``False`` — always scan all chunk files.
+            Ignored when ``NP > 1``. Default ``False``.
         stop_when_found : int, optional
-            Advanced override: stop after exactly this many cumulative
-            matches regardless of *stop_early*.  ``0`` (default) defers to
-            *stop_early*.
+            Advanced override: stop after exactly this many cumulative matches.
+            ``0`` (default) defers to *stop_early*. Ignored when ``NP > 1``.
+        NP : int, optional
+            Number of worker processes.  ``NP <= 1`` (default) runs
+            sequentially; ``NP > 1`` uses a multiprocessing pool.
 
         Returns
         -------
@@ -811,7 +814,7 @@ class IDFinder:
 
         Examples
         --------
-        Find star masses and coordinates by ParticleID (scan all files)::
+        Sequential — find star masses by ParticleID::
 
             result = IDFinder(basePath, snapNum).find(
                 ids,
@@ -819,7 +822,16 @@ class IDFinder:
                 return_fields=["PartType4/Coordinates", "PartType4/Masses"],
             )
 
-        Find tracers by TracerID and stop as soon as all are found::
+        Parallel with 8 processes::
+
+            result = IDFinder(basePath, snapNum).find(
+                ids,
+                id_field="PartType4/ParticleIDs",
+                return_fields=["PartType4/Masses"],
+                NP=8,
+            )
+
+        Stop as soon as all TracerIDs are found (sequential only)::
 
             result = IDFinder(basePath, snapNum).find(
                 tracer_ids,
@@ -828,6 +840,10 @@ class IDFinder:
                 stop_early=True,
             )
         """
+        if NP > 1:
+            return self._find_mp(findID, id_field, return_fields, NP=NP)
+
+        # --- sequential path ---
         # Resolve the effective early-stop count:
         #   stop_when_found > 0  -> use it directly (advanced override)
         #   stop_early=True      -> stop once all requested IDs are found
@@ -842,10 +858,10 @@ class IDFinder:
         if pt_num is not None and not self._nPart[pt_num]:
             return {field: np.array([]) for field in return_fields}
 
-        findID     = np.asarray(findID)
-        chunks     = {field: [] for field in return_fields}
+        findID        = np.asarray(findID)
+        chunks        = {field: [] for field in return_fields}
         total_matched = 0
-        pbar_total = self._nPart[pt_num] if pt_num is not None else int(sum(self._nPart))
+        pbar_total    = self._nPart[pt_num] if pt_num is not None else int(sum(self._nPart))
 
         with tqdm(total=pbar_total) as pbar:
             for fileNum in range(self._numFiles):
@@ -872,33 +888,15 @@ class IDFinder:
             for field in return_fields
         }
 
-    def find_mp(
+    def _find_mp(
         self,
         findID,
         id_field: str,
         return_fields: List[str],
         *,
-        NP: int = 6,
+        NP: int,
     ) -> dict:
-        """
-        Multiprocessing version of :meth:`find`.
-
-        Parameters
-        ----------
-        findID : array-like
-            IDs to match.
-        id_field : str
-            HDF5 dataset path used as the search key.
-        return_fields : list of str
-            HDF5 dataset paths to return for matching rows.
-        NP : int, optional
-            Number of worker processes (default 6).
-
-        Returns
-        -------
-        dict
-            ``{field: np.ndarray}`` for each field in *return_fields*.
-        """
+        """Internal multiprocessing backend used by :meth:`find` when ``NP > 1``."""
         pt_num = self._parse_field_path(id_field)
         return_fields = list(return_fields)
         if id_field not in return_fields:
@@ -907,8 +905,8 @@ class IDFinder:
         if pt_num is not None and not self._nPart[pt_num]:
             return {field: np.array([]) for field in return_fields}
 
-        findIDset  = set(findID)
-        file_args  = [
+        findIDset = set(findID)
+        file_args = [
             (self.basePath, self.snapNum, fileNum, findIDset, id_field, return_fields)
             for fileNum in range(self._numFiles)
         ]
@@ -932,8 +930,7 @@ class IDFinder:
         findID: List[int],
         *,
         istracerid: bool = False,
-        parallel: bool = False,
-        NP: int = 6,
+        NP: int = 1,
     ) -> dict:
         """
         Find Monte-Carlo tracers by ParentID or TracerID.
@@ -945,10 +942,9 @@ class IDFinder:
         istracerid : bool, optional
             If ``True``, match TracerIDs; otherwise match ParentIDs.
             Default ``False``.
-        parallel : bool, optional
-            Use multiprocessing. Default ``False``.
         NP : int, optional
-            Number of worker processes (only used when *parallel* is ``True``).
+            Number of worker processes.  ``NP <= 1`` (default) runs
+            sequentially; ``NP > 1`` uses a multiprocessing pool.
 
         Returns
         -------
@@ -966,13 +962,8 @@ class IDFinder:
         """
         id_field      = self.TRACER_ID_FIELD if istracerid else self.TRACER_PARENT_FIELD
         return_fields = [self.TRACER_PARENT_FIELD, self.TRACER_ID_FIELD]
-
-        if parallel:
-            raw = self.find_mp(findID, id_field, return_fields, NP=NP)
-        else:
-            # istracerid=True means 1:1 TracerID mapping -> safe to stop early
-            raw = self.find(findID, id_field, return_fields, stop_early=istracerid)
-
+        # istracerid=True is 1:1 -> safe to stop early (sequential only; NP>1 ignores it)
+        raw = self.find(findID, id_field, return_fields, stop_early=istracerid, NP=NP)
         return {
             'ParentID': raw[self.TRACER_PARENT_FIELD].astype(int),
             'TracerID': raw[self.TRACER_ID_FIELD].astype(int),
@@ -992,36 +983,25 @@ def find_by_id(
     *,
     stop_early: bool = False,
     stop_when_found: int = 0,
+    NP: int = 1,
 ) -> dict:
     """
-    Sequential search across snapshot chunk files by matching IDs.
+    Search snapshot chunk files by matching IDs.
 
     Thin wrapper around :meth:`IDFinder.find`; see that method for full
     parameter and return-value documentation.
+
+    Parameters
+    ----------
+    NP : int, optional
+        ``NP <= 1`` (default) runs sequentially; ``NP > 1`` uses a
+        multiprocessing pool (*stop_early* and *stop_when_found* are
+        ignored when ``NP > 1``).
     """
     return IDFinder(basePath, snapNum).find(
         findID, id_field, return_fields,
-        stop_early=stop_early, stop_when_found=stop_when_found,
+        stop_early=stop_early, stop_when_found=stop_when_found, NP=NP,
     )
-
-
-def find_by_id_MP(
-    basePath: str,
-    snapNum: int,
-    findID,
-    id_field: str,
-    return_fields: List[str],
-    *,
-    NP: int = 6,
-) -> dict:
-    """
-    Multiprocessing search across snapshot chunk files by matching IDs.
-
-    Thin wrapper around :meth:`IDFinder.find_mp`; see that method for full
-    parameter and return-value documentation.
-    """
-    return IDFinder(basePath, snapNum).find_mp(findID, id_field, return_fields, NP=NP)
-
 
 def findtracer(
     basePath: str,
@@ -1029,36 +1009,23 @@ def findtracer(
     findID: List[int],
     *,
     istracerid: bool = False,
+    NP: int = 1,
 ) -> dict:
     """
-    Find MC tracers by ParentID or TracerID (sequential).
+    Find MC tracers by ParentID or TracerID.
 
     Thin wrapper around :meth:`IDFinder.find_tracers`; see that method for
     full parameter and return-value documentation.
+
+    Parameters
+    ----------
+    NP : int, optional
+        ``NP <= 1`` (default) runs sequentially; ``NP > 1`` uses a
+        multiprocessing pool.
     """
     return IDFinder(basePath, snapNum).find_tracers(
-        findID, istracerid=istracerid, parallel=False
+        findID, istracerid=istracerid, NP=NP
     )
-
-
-def findtracer_MP(
-    basePath: str,
-    snapNum: int,
-    findID: List[int],
-    *,
-    istracerid: bool = False,
-    NP: int = 6,
-) -> dict:
-    """
-    Find MC tracers by ParentID or TracerID (multiprocessing).
-
-    Thin wrapper around :meth:`IDFinder.find_tracers`; see that method for
-    full parameter and return-value documentation.
-    """
-    return IDFinder(basePath, snapNum).find_tracers(
-        findID, istracerid=istracerid, parallel=True, NP=NP
-    )
-
 
 
 
