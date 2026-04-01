@@ -663,6 +663,366 @@ class Star_birth(Basehalo):
     def wrap(self):
         pass
 
+class IDFinder:
+    """
+    Find particles in TNG snapshot files by matching IDs.
+
+    Parameters
+    ----------
+    basePath : str
+        Base directory path of the simulation.
+    snapNum : int
+        Snapshot number.
+
+    Examples
+    --------
+    General particle lookup::
+
+        finder = IDFinder(basePath, snapNum)
+        result = finder.find(
+            ids,
+            id_field="PartType4/ParticleIDs",
+            return_fields=["PartType4/Coordinates", "PartType4/Masses"],
+        )
+
+    Tracer lookup::
+
+        finder = IDFinder(basePath, snapNum)
+        tracers = finder.find_tracers(star_ids, istracerid=False)
+        # tracers['TracerID'] -> tracer IDs attached to those stars
+
+    Chaining tracers across snapshots::
+
+        now    = IDFinder(basePath, snapNumNow).find_tracers(star_ids)
+        before = IDFinder(basePath, snapNumBefore).find_tracers(
+                     now['TracerID'], istracerid=True)
+        # before['ParentID'] -> progenitor gas/star ParticleIDs
+    """
+
+    TRACER_PARENT_FIELD = 'PartType3/ParentID'
+    TRACER_ID_FIELD     = 'PartType3/TracerID'
+
+    def __init__(self, basePath: str, snapNum: int):
+        self.basePath = basePath
+        self.snapNum  = snapNum
+        with h5py.File(snapPath(basePath, snapNum), 'r') as f:
+            header        = dict(f['Header'].attrs.items())
+            self._nPart   = getNumPart(header)
+            self._numFiles = int(header.get('NumFilesPerSnapshot', 1))
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_field_path(field_path: str):
+        """
+        Parse an HDF5 dataset path.
+
+        Returns
+        -------
+        pt_num : int or None
+            Particle type number, taken from the first path component that
+            matches ``"PartTypeN"`` (N is an integer).  ``None`` for paths
+            that contain no such component.
+
+        Examples
+        --------
+        ``"PartType3/TracerID"``         -> 3
+        ``"PartType3/SubGroup/Data"``    -> 3
+        ``"particles/PartType4/Masses"`` -> 4
+        ``"Header/NumPart"``             -> None
+        """
+        for part in field_path.split('/'):
+            if part.startswith('PartType') and part[len('PartType'):].isdigit():
+                return int(part[len('PartType'):])
+        return None
+
+    @staticmethod
+    def _worker(args: tuple) -> dict:
+        """
+        Multiprocessing worker: search one snapshot chunk file for matching IDs.
+
+        Parameters
+        ----------
+        args : tuple
+            ``(basePath, snapNum, fileNum, findIDset, id_field, return_fields)``
+
+        Returns
+        -------
+        dict
+            ``{field: np.ndarray}`` for each field in *return_fields*.
+            Arrays are empty when no match is found in this chunk.
+        """
+        basePath, snapNum, fileNum, findIDset, id_field, return_fields = args
+        result = {field: np.array([], dtype=np.int64) for field in return_fields}
+        try:
+            with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
+                if id_field not in f:
+                    return result
+                key_arr = f[id_field][:]
+                mask = np.isin(key_arr, list(findIDset))
+                if mask.any():
+                    for field in return_fields:
+                        if field in f:
+                            result[field] = f[field][:][mask]
+        except OSError:
+            pass
+        return result
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def find(
+        self,
+        findID,
+        id_field: str,
+        return_fields: List[str],
+        *,
+        stop_early: bool = False,
+        stop_when_found: int = 0,
+    ) -> dict:
+        """
+        Sequential search across all snapshot chunk files.
+
+        Parameters
+        ----------
+        findID : array-like
+            IDs to match against *id_field*.
+        id_field : str
+            HDF5 dataset path used as the search key,
+            e.g. ``"PartType3/ParentID"`` or ``"PartType3/SubGroup/ID"``.
+        return_fields : list of str
+            HDF5 dataset paths to collect for matching rows.
+        stop_early : bool, optional
+            When ``True``, stop scanning once ``len(findID)`` matches have
+            been found (assumes a 1-to-1 ID mapping, e.g. TracerID lookup).
+            Default ``False`` — always scan all chunk files.
+        stop_when_found : int, optional
+            Advanced override: stop after exactly this many cumulative
+            matches regardless of *stop_early*.  ``0`` (default) defers to
+            *stop_early*.
+
+        Returns
+        -------
+        dict
+            ``{field: np.ndarray}`` for each field in *return_fields*.
+
+        Examples
+        --------
+        Find star masses and coordinates by ParticleID (scan all files)::
+
+            result = IDFinder(basePath, snapNum).find(
+                ids,
+                id_field="PartType4/ParticleIDs",
+                return_fields=["PartType4/Coordinates", "PartType4/Masses"],
+            )
+
+        Find tracers by TracerID and stop as soon as all are found::
+
+            result = IDFinder(basePath, snapNum).find(
+                tracer_ids,
+                id_field="PartType3/TracerID",
+                return_fields=["PartType3/ParentID"],
+                stop_early=True,
+            )
+        """
+        # Resolve the effective early-stop count:
+        #   stop_when_found > 0  -> use it directly (advanced override)
+        #   stop_early=True      -> stop once all requested IDs are found
+        #   otherwise            -> scan every chunk file
+        _stop = stop_when_found if stop_when_found > 0 else (len(findID) if stop_early else 0)
+
+        pt_num = self._parse_field_path(id_field)
+        return_fields = list(return_fields)
+        if id_field not in return_fields:
+            return_fields.insert(0, id_field)
+
+        if pt_num is not None and not self._nPart[pt_num]:
+            return {field: np.array([]) for field in return_fields}
+
+        findID     = np.asarray(findID)
+        chunks     = {field: [] for field in return_fields}
+        total_matched = 0
+        pbar_total = self._nPart[pt_num] if pt_num is not None else int(sum(self._nPart))
+
+        with tqdm(total=pbar_total) as pbar:
+            for fileNum in range(self._numFiles):
+                with h5py.File(snapPath(self.basePath, self.snapNum, fileNum), 'r') as f:
+                    num_local = (
+                        int(f['Header'].attrs['NumPart_ThisFile'][pt_num])
+                        if pt_num is not None
+                        else int(f['Header'].attrs['NumPart_ThisFile'].sum())
+                    )
+                    if id_field in f:
+                        key_arr = f[id_field][:]
+                        mask    = np.isin(key_arr, findID)
+                        if mask.any():
+                            for field in return_fields:
+                                if field in f:
+                                    chunks[field].append(f[field][:][mask])
+                            total_matched += int(mask.sum())
+                pbar.update(num_local)
+                if _stop and total_matched >= _stop:
+                    break
+
+        return {
+            field: np.concatenate(chunks[field]) if chunks[field] else np.array([])
+            for field in return_fields
+        }
+
+    def find_mp(
+        self,
+        findID,
+        id_field: str,
+        return_fields: List[str],
+        *,
+        NP: int = 6,
+    ) -> dict:
+        """
+        Multiprocessing version of :meth:`find`.
+
+        Parameters
+        ----------
+        findID : array-like
+            IDs to match.
+        id_field : str
+            HDF5 dataset path used as the search key.
+        return_fields : list of str
+            HDF5 dataset paths to return for matching rows.
+        NP : int, optional
+            Number of worker processes (default 6).
+
+        Returns
+        -------
+        dict
+            ``{field: np.ndarray}`` for each field in *return_fields*.
+        """
+        pt_num = self._parse_field_path(id_field)
+        return_fields = list(return_fields)
+        if id_field not in return_fields:
+            return_fields.insert(0, id_field)
+
+        if pt_num is not None and not self._nPart[pt_num]:
+            return {field: np.array([]) for field in return_fields}
+
+        findIDset  = set(findID)
+        file_args  = [
+            (self.basePath, self.snapNum, fileNum, findIDset, id_field, return_fields)
+            for fileNum in range(self._numFiles)
+        ]
+        chunks = {field: [] for field in return_fields}
+
+        with mp.Pool(processes=NP) as pool:
+            with tqdm(total=self._numFiles) as pbar:
+                for result_local in pool.imap_unordered(IDFinder._worker, file_args):
+                    for field in return_fields:
+                        if len(result_local[field]):
+                            chunks[field].append(result_local[field])
+                    pbar.update(1)
+
+        return {
+            field: np.concatenate(chunks[field]) if chunks[field] else np.array([])
+            for field in return_fields
+        }
+
+    def find_tracers(
+        self,
+        findID: List[int],
+        *,
+        istracerid: bool = False,
+        parallel: bool = False,
+        NP: int = 6,
+    ) -> dict:
+        """
+        Find Monte-Carlo tracers by ParentID or TracerID.
+
+        Parameters
+        ----------
+        findID : list[int]
+            IDs to search for.
+        istracerid : bool, optional
+            If ``True``, match TracerIDs; otherwise match ParentIDs.
+            Default ``False``.
+        parallel : bool, optional
+            Use multiprocessing. Default ``False``.
+        NP : int, optional
+            Number of worker processes (only used when *parallel* is ``True``).
+
+        Returns
+        -------
+        dict
+            ``{'ParentID': np.ndarray, 'TracerID': np.ndarray}``
+
+        Notes
+        -----
+        Works for all snapshots in TNG50 and TNG300, but only the 20 full
+        snapshots for TNG100.
+
+        When matching ParentIDs the result count may differ from
+        ``len(findID)`` because one parent can have zero or multiple tracers.
+        When matching TracerIDs the result count equals ``len(findID)``.
+        """
+        id_field      = self.TRACER_ID_FIELD if istracerid else self.TRACER_PARENT_FIELD
+        return_fields = [self.TRACER_PARENT_FIELD, self.TRACER_ID_FIELD]
+
+        if parallel:
+            raw = self.find_mp(findID, id_field, return_fields, NP=NP)
+        else:
+            # istracerid=True means 1:1 TracerID mapping -> safe to stop early
+            raw = self.find(findID, id_field, return_fields, stop_early=istracerid)
+
+        return {
+            'ParentID': raw[self.TRACER_PARENT_FIELD].astype(int),
+            'TracerID': raw[self.TRACER_ID_FIELD].astype(int),
+        }
+
+
+# ---------------------------------------------------------------------------
+# Module-level convenience wrappers (backward compatibility)
+# ---------------------------------------------------------------------------
+
+def find_by_id(
+    basePath: str,
+    snapNum: int,
+    findID,
+    id_field: str,
+    return_fields: List[str],
+    *,
+    stop_early: bool = False,
+    stop_when_found: int = 0,
+) -> dict:
+    """
+    Sequential search across snapshot chunk files by matching IDs.
+
+    Thin wrapper around :meth:`IDFinder.find`; see that method for full
+    parameter and return-value documentation.
+    """
+    return IDFinder(basePath, snapNum).find(
+        findID, id_field, return_fields,
+        stop_early=stop_early, stop_when_found=stop_when_found,
+    )
+
+
+def find_by_id_MP(
+    basePath: str,
+    snapNum: int,
+    findID,
+    id_field: str,
+    return_fields: List[str],
+    *,
+    NP: int = 6,
+) -> dict:
+    """
+    Multiprocessing search across snapshot chunk files by matching IDs.
+
+    Thin wrapper around :meth:`IDFinder.find_mp`; see that method for full
+    parameter and return-value documentation.
+    """
+    return IDFinder(basePath, snapNum).find_mp(findID, id_field, return_fields, NP=NP)
+
+
 def findtracer(
     basePath: str,
     snapNum: int,
@@ -671,215 +1031,14 @@ def findtracer(
     istracerid: bool = False,
 ) -> dict:
     """
-    Find the tracers of specified IDs (ParentIDs or TracerIDs) in the simulation data.
+    Find MC tracers by ParentID or TracerID (sequential).
 
-    Note:
-        This function works for all 100 snapshots for TNG300 and TNG50, but only the 20 full snapshots for TNG100.
-
-    Parameters:
-    ----------
-    basePath : str
-        The base directory path where simulation data is stored.
-    snapNum : int
-        Snapshot number to search within.
-    findID : list or array
-        1D array of the specified IDs (ParentIDs or TracerIDs) to find. Default is None.
-    istracerid : bool, optional
-        If True, match TracerIDs; if False, match ParentIDs. Default is False.
-
-    Returns:
-    -------
-    dict
-        A dictionary with keys:
-            - 'ParentID': Array of matched ParentIDs.
-            - 'TracerID': Array of matched TracerIDs.
-        Note:
-            - When matching ParentIDs, the number of tracers found may differ from the length of `findID` since a parent can have no or multiple tracers.
-            - When matching TracerIDs, the number of tracers found must match the length of `findID`.
-
-    Examples:
-    --------
-    Example 1:
-        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi can be gas cell, star, wind phase cell, or BH IDs
-        Tracer = findtracer(basePath, snapNum, findID=findID, istracerid=False)
-
-    Example 2:
-        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi should be tracer IDs
-        Tracer = findtracer(basePath, snapNum, findID=findID, istracerid=True)
-
-    Example 3: Find the progenitor gas ParticleIDs of star ParticleIDs
-        findID = np.array([ID1, ID2, ID3, ..., IDi])  # IDi are the current star ParticleIDs (ParentID)
-        Tracernow = findtracer(basePath, snapNumNow, findID=findID, istracerid=False)  # Link current ParticleIDs (ParentID) to TracerID
-        Trecerbefore = findtracer(basePath, snapNumbefore, findID=Tracernow['TracerID'], istracerid=True)  # Link TracerID to progenitor ParticleIDs (ParentID)
-        # Trecerbefore['ParentID'] contains the progenitor ParticleIDs (could be gas or star)
+    Thin wrapper around :meth:`IDFinder.find_tracers`; see that method for
+    full parameter and return-value documentation.
     """
-
-    result = {}
-    result['ParentID'] = np.array([])
-    result['TracerID'] = np.array([])
-
-    # PartType3, tracer
-    ptNum = 3
-    gName = "PartType" + str(ptNum)
-
-    # Apart from ParentID and TracerID, there is also FluidQuantities in TNG100
-    fields = ['ParentID', 'TracerID']
-
-    findIDset = set(findID)
-
-    # load header from first chunk
-    with h5py.File(snapPath(basePath, snapNum), 'r') as f:
-        header = dict(f['Header'].attrs.items())
-        nPart = getNumPart(header)
-
-        fileNum = 0
-        fileOff = 0
-        numToRead = nPart[ptNum]
-
-        if not numToRead:
-
-            return result
-
-        i = 1
-        while gName not in f:
-            f = h5py.File(snapPath(basePath, snapNum, i), 'r')
-            i += 1
-
-        if not fields:
-            fields = list(f[gName].keys())
-
-    wOffset = 0
-    origNumToRead = numToRead
-
-    # progress bar
-    with tqdm(total=numToRead) as pbar:
-        while numToRead:
-            f = h5py.File(snapPath(basePath, snapNum, fileNum), 'r')
-
-            if gName not in f:
-                f.close()
-                fileNum += 1
-                fileOff = 0
-                continue
-
-            numTypeLocal = f['Header'].attrs['NumPart_ThisFile'][ptNum]
-            numToReadLocal = numToRead
-
-            if fileOff + numToReadLocal > numTypeLocal:
-                numToReadLocal = numTypeLocal - fileOff
-
-            if istracerid:
-                findresult = findIDset.isdisjoint(
-                    f['PartType3']['TracerID'][:]
-                )  # time complexity O( min(len(set1),len(set2)) )
-            else:
-                findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
-
-            if findresult == False:
-                ParentID = np.array(f['PartType3']['ParentID'])
-                TracerID = np.array(f['PartType3']['TracerID'])
-                if istracerid:
-                    Findepatticle = np.isin(
-                        TracerID, findID
-                    )  # time complexity O( len(array1)*len(array2) )
-                else:
-                    Findepatticle = np.isin(ParentID, findID)
-                result['TracerID'] = np.append(
-                    result['TracerID'], TracerID[Findepatticle]
-                )
-                result['ParentID'] = np.append(
-                    result['ParentID'], ParentID[Findepatticle]
-                )
-                print(
-                    'Number of tracers that have been matched: ',
-                    len(result['TracerID']),
-                )
-
-            wOffset += numToReadLocal
-            numToRead -= numToReadLocal
-            fileNum += 1
-            fileOff = 0
-
-            f.close()
-            pbar.update(numToReadLocal)
-
-            # if matching TracerIDs, the number of tracers found must be the same as the len(findID).
-            if istracerid and len(result['TracerID']) == len(findID):
-                break
-    result['TracerID'] = result['TracerID'].astype(int)
-    result['ParentID'] = result['ParentID'].astype(int)
-    return result
-
-
-
-def _process_file(file_info):
-    """
-    Process a single file to find tracers of specified IDs (ParentIDs or TracerIDs).
-    This function is used by the `findtracer_MP` function to distribute tasks among multiple processes.
-
-    Parameters:
-    ----------
-    file_info : tuple
-        A tuple containing the following elements:
-            - basePath : str
-                The base directory path where simulation data is stored.
-            - snapNum : int
-                Snapshot number to search within.
-            - fileNum : int
-                The file number within the snapshot to process.
-            - findIDset : set
-                Set of specified IDs (ParentIDs or TracerIDs) to find.
-            - istracerid : bool
-                If True, match TracerIDs; if False, match ParentIDs.
-
-    Returns:
-    -------
-    dict
-        A dictionary with keys:
-            - 'ParentID': List of matched ParentIDs.
-            - 'TracerID': List of matched TracerIDs.
-        Note:
-            - When `istracerid` is True, the dictionary contains tracers that match the IDs in `findIDset`.
-            - When `istracerid` is False, the dictionary contains parents that match the IDs in `findIDset`.
-
-    Notes:
-    -----
-    - This function is designed to be used with multiprocessing to improve performance when searching through large datasets.
-    - It reads a specific file within a snapshot and checks for the presence of IDs in the dataset.
-    """
-    basePath, snapNum, fileNum, findIDset, istracerid = file_info
-    result_local = {'ParentID': [], 'TracerID': []}
-
-    gName = "PartType3"
-    fields = ['ParentID', 'TracerID']
-
-    with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
-        # print('open file')
-        if gName not in f:
-            print('skip', fileNum)
-            return result_local
-        #  print(len(f['PartType3']['TracerID'][:]))
-        if istracerid:
-            findresult = findIDset.isdisjoint(
-                f['PartType3']['TracerID'][:]
-            )  # time complexity O( min(len(set1),len(set2)) )
-        else:
-            findresult = findIDset.isdisjoint(f['PartType3']['ParentID'][:])
-
-        if not findresult:
-
-            ParentID = np.array(f[gName]['ParentID'])
-            TracerID = np.array(f[gName]['TracerID'])
-
-            if istracerid:
-                Findepatticle = np.isin(TracerID, list(findIDset))
-            else:
-                Findepatticle = np.isin(ParentID, list(findIDset))
-
-            result_local['TracerID'] = TracerID[Findepatticle]
-            result_local['ParentID'] = ParentID[Findepatticle]
-
-    return result_local
+    return IDFinder(basePath, snapNum).find_tracers(
+        findID, istracerid=istracerid, parallel=False
+    )
 
 
 def findtracer_MP(
@@ -891,87 +1050,14 @@ def findtracer_MP(
     NP: int = 6,
 ) -> dict:
     """
-    Find the tracers of specified IDs (ParentIDs or TracerIDs) using multiprocessing to speed up the search.
+    Find MC tracers by ParentID or TracerID (multiprocessing).
 
-    Note:
-        This function works for all snapshots in TNG300 and TNG50, but only the 20 full snapshots for TNG100.
-        Using multiprocessing with the parameter NP can improve performance, but be mindful of available memory.
-
-    Parameters:
-    ----------
-    basePath : str
-        The base directory path where simulation data is stored.
-    snapNum : int
-        Snapshot number to search within.
-    findID : list [int]
-        1D array of the specified IDs (ParentIDs or TracerIDs) to find.
-    istracerid : bool, optional
-        If True, match TracerIDs; if False, match ParentIDs. Default is False.
-    NP : int, optional
-        Number of multiprocessing processes to use. Default is 6. More processes can speed up the search but require more memory.
-
-    Returns:
-    -------
-    dict
-        A dictionary with keys:
-            - 'ParentID': Array of matched ParentIDs.
-            - 'TracerID': Array of matched TracerIDs.
-        Note:
-            - When matching ParentIDs, the number of tracers found may differ from the length of `findID` since a parent can have no or multiple tracers.
-            - When matching TracerIDs, the number of tracers found must match the length of `findID`.
+    Thin wrapper around :meth:`IDFinder.find_tracers`; see that method for
+    full parameter and return-value documentation.
     """
-
-    result = {'ParentID': np.array([]), 'TracerID': np.array([])}
-    findIDset = set(findID)
-
-    # Load header to determine number of particles
-    with h5py.File(snapPath(basePath, snapNum), 'r') as f:
-        header = dict(f['Header'].attrs.items())
-        nPart = getNumPart(header)
-        numToRead = nPart[3]  # trecer num
-
-        if not numToRead:
-            return result
-
-        # file num
-        file_numbers = []
-        i = 1
-        while True:
-            try:
-                with h5py.File(snapPath(basePath, snapNum, i), 'r') as f:
-                    if "PartType3" in f:
-                        file_numbers.append(i)
-                        i += 1
-                    else:
-                        break
-            except FileNotFoundError:
-                break
-    # mutiprocesses
-    with mp.Pool(processes=NP) as pool:
-        # date
-        file_infos = [
-            (basePath, snapNum, fileNum, findIDset, istracerid)
-            for fileNum in file_numbers
-        ]
-
-        # progressing bar
-        with tqdm(total=len(file_infos)) as pbar:
-            # Use imap to process files and update the progress bar
-            for result_local in pool.imap_unordered(_process_file, file_infos):
-                result['TracerID'] = np.append(
-                    result['TracerID'], result_local['TracerID']
-                )
-                result['ParentID'] = np.append(
-                    result['ParentID'], result_local['ParentID']
-                )
-                # print(len(result_local['ParentID']),len(result['ParentID']))
-                pbar.update(1)
-
-    # Convert to integer type
-    result['TracerID'] = result['TracerID'].astype(int)
-    result['ParentID'] = result['ParentID'].astype(int)
-
-    return result
+    return IDFinder(basePath, snapNum).find_tracers(
+        findID, istracerid=istracerid, parallel=True, NP=NP
+    )
 
 
 
