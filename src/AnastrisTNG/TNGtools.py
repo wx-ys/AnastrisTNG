@@ -6,7 +6,7 @@ galaxy profile: single: profile(), all: Profile_1D(). Class.
 ...
 '''
 
-from typing import List
+from typing import Any, Dict, List, Optional, Tuple
 import multiprocessing as mp
 import re
 import math
@@ -663,59 +663,108 @@ class Star_birth(Basehalo):
     def wrap(self):
         pass
 
+_IDFINDER_FIND_IDS: Optional[np.ndarray] = None
+Task = Tuple[str, int, int, str, List[str]]
+
+
+def _idfinder_init_worker(find_ids: np.ndarray) -> None:
+    global _IDFINDER_FIND_IDS
+    _IDFINDER_FIND_IDS = find_ids
+
+
+def _idfinder_worker_range(
+    args: Task
+) -> Tuple[Dict[str, np.ndarray], int]:
+    file_path, start, end, id_field, return_fields = args
+
+    if _IDFINDER_FIND_IDS is None:
+        raise RuntimeError("IDFinder worker was not initialized with find IDs")
+
+    return IDFinder._worker_range_impl(
+        file_path=file_path,
+        start=start,
+        end=end,
+        findID=_IDFINDER_FIND_IDS,
+        id_field=id_field,
+        return_fields=return_fields,
+    )
 class IDFinder:
     """
-    Find particles in TNG snapshot files by matching IDs.
+    Find particles in TNG snapshot files or a single HDF5 file by matching IDs.
 
     Parameters
     ----------
     basePath : str
-        Base directory path of the simulation.
-    snapNum : int
-        Snapshot number.
+        Base directory path of the simulation, or the path to a single HDF5
+        snapshot chunk file when *snapNum* is omitted.
+    snapNum : int, optional
+        Snapshot number. When omitted, *basePath* is treated as a concrete
+        HDF5 file path and only that file is scanned.
 
     Examples
     --------
     General particle lookup::
 
-        finder = IDFinder(basePath, snapNum)
-        result = finder.find(
-            ids,
-            id_field="PartType4/ParticleIDs",
-            return_fields=["PartType4/Coordinates", "PartType4/Masses"],
-        )
+    >>> finder = IDFinder(basePath, snapNum)
+    >>> result = finder.find(
+    ...     ids,
+    ...     id_field="PartType4/ParticleIDs",
+    ...     return_fields=["PartType4/Coordinates", "PartType4/Masses"],
+    ... )
 
     Tracer lookup::
 
-        finder = IDFinder(basePath, snapNum)
-        tracers = finder.find_tracers(star_ids, istracerid=False)
-        # tracers['TracerID'] -> tracer IDs attached to those stars
+    >>> finder = IDFinder(basePath, snapNum)
+    >>> tracers = finder.find_tracers(star_ids, istracerid=False)
+    >>> # tracers['TracerID'] -> tracer IDs attached to those stars
 
     Chaining tracers across snapshots::
 
-        now    = IDFinder(basePath, snapNumNow).find_tracers(star_ids)
-        before = IDFinder(basePath, snapNumBefore).find_tracers(
-                     now['TracerID'], istracerid=True)
-        # before['ParentID'] -> progenitor gas/star ParticleIDs
+    >>> now    = IDFinder(basePath, snapNumNow).find_tracers(star_ids)
+    >>> before = IDFinder(basePath, snapNumBefore).find_tracers(
+    ...              now['TracerID'], istracerid=True)
+    >>> # before['ParentID'] -> progenitor gas/star ParticleIDs
+
+    Notes
+    -----
+    - In sequential mode, results follow snapshot scan order, not input-ID order.
+    - In multiprocessing mode, results are merged as worker tasks finish; result
+      order is therefore undefined.
+    - If a requested return field is missing from a matched file, a KeyError is raised.
     """
 
     TRACER_PARENT_FIELD = 'PartType3/ParentID'
     TRACER_ID_FIELD     = 'PartType3/TracerID'
 
-    def __init__(self, basePath: str, snapNum: int):
+    def __init__(self, basePath: str, snapNum: Optional[int] = None):
         self.basePath = basePath
         self.snapNum  = snapNum
-        with h5py.File(snapPath(basePath, snapNum), 'r') as f:
-            header        = dict(f['Header'].attrs.items())
-            self._nPart   = getNumPart(header)
-            self._numFiles = int(header.get('NumFilesPerSnapshot', 1))
+        self._files = self._resolve_files()
+        self.snapPath = self._files[0]
+
+        with h5py.File(self.snapPath, 'r') as f:
+            header = dict(f['Header'].attrs.items())
+            self._nPart = getNumPart(header)
+
+        self._numFiles = len(self._files)
+
+    def _resolve_files(self) -> List[str]:
+        """Resolve the concrete HDF5 file list to scan."""
+        if self.snapNum is None:
+            return [self.basePath]
+
+        first_file = snapPath(self.basePath, self.snapNum, 0)
+        with h5py.File(first_file, 'r') as f:
+            num_files = int(f['Header'].attrs.get('NumFilesPerSnapshot', 1))
+
+        return [snapPath(self.basePath, self.snapNum, fileNum) for fileNum in range(num_files)]
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _parse_field_path(field_path: str):
+    def _parse_field_path(field_path: str) -> Optional[int]:
         """
         Parse an HDF5 dataset path.
 
@@ -739,36 +788,145 @@ class IDFinder:
         return None
 
     @staticmethod
-    def _worker(args: tuple) -> dict:
+    def _normalize_ids(findID: Any) -> np.ndarray:
         """
-        Multiprocessing worker: search one snapshot chunk file for matching IDs.
+        Normalize IDs into a 1D numpy array.
 
-        Parameters
-        ----------
-        args : tuple
-            ``(basePath, snapNum, fileNum, findIDset, id_field, return_fields)``
-
-        Returns
-        -------
-        dict
-            ``{field: np.ndarray}`` for each field in *return_fields*.
-            Arrays are empty when no match is found in this chunk.
+        Accepts scalar IDs or array-like inputs.
         """
-        basePath, snapNum, fileNum, findIDset, id_field, return_fields = args
-        result = {field: np.array([], dtype=np.int64) for field in return_fields}
+        ids = np.asarray(findID)
+        if ids.ndim == 0:
+            ids = ids.reshape(1)
+        else:
+            ids = ids.ravel()
+
+        return ids
+
+    @staticmethod
+    def _empty_result(return_fields: List[str]) -> Dict[str, np.ndarray]:
+        """Generate an empty result dict with the correct keys and empty arrays."""
+        return {field: np.array([]) for field in return_fields}
+
+    @staticmethod
+    def _merge_chunks(
+        chunks: Dict[str, List[np.ndarray]], 
+        return_fields: List[str]
+        ) -> Dict[str, np.ndarray]:
+        """Merge lists of arrays from multiple chunks into single arrays for each field."""
+        return {
+            field: np.concatenate(chunks[field]) if chunks[field] else np.array([])
+            for field in return_fields
+        }
+
+    @staticmethod
+    def _validate_fields_in_file(
+        f: h5py.File,
+        id_field: str,
+        return_fields: List[str],
+    ) -> None:
+        """
+        Ensure the search field and all requested return fields exist.
+
+        We only call this for files that contain the id_field dataset.
+        """
+        if id_field not in f:
+            raise KeyError("Missing search field: %s" % id_field)
+
+        missing_fields = [field for field in return_fields if field not in f]
+        if missing_fields:
+            raise KeyError(
+                "Missing return field(s) in file %s: %s"
+                % (getattr(f, 'filename', '<unknown>'), ', '.join(missing_fields))
+            )
+
+    @staticmethod
+    def _iter_ranges(n_rows: int, max_rows_per_chunk: Optional[int]):
+        if max_rows_per_chunk is None or max_rows_per_chunk <= 0:
+            max_rows_per_chunk = n_rows
+
+        for start in range(0, n_rows, max_rows_per_chunk):
+            end = min(start + max_rows_per_chunk, n_rows)
+            yield start, end
+
+    @staticmethod
+    def _worker_range_impl(
+        file_path: str,
+        start: int,
+        end: int,
+        findID: np.ndarray,
+        id_field: str,
+        return_fields: List[str],
+    ) -> Tuple[Dict[str, np.ndarray], int]:
+        result = IDFinder._empty_result(return_fields)
+
         try:
-            with h5py.File(snapPath(basePath, snapNum, fileNum), 'r') as f:
+            with h5py.File(file_path, 'r') as f:
                 if id_field not in f:
-                    return result
-                key_arr = f[id_field][:]
-                mask = np.isin(key_arr, list(findIDset))
+                    return result, 0
+
+                IDFinder._validate_fields_in_file(f, id_field, return_fields)
+
+                key_arr = f[id_field][start:end]
+                #mask = np.isin(key_arr, findID)
+                idx = np.searchsorted(findID, key_arr)
+                valid = idx < findID.size
+                mask = np.zeros_like(key_arr, dtype=bool)
+                mask[valid] = findID[idx[valid]] == key_arr[valid]
+
                 if mask.any():
                     for field in return_fields:
-                        if field in f:
-                            result[field] = f[field][:][mask]
+                        result[field] = f[field][start:end][mask]
         except OSError:
-            pass
-        return result
+            return result, 0
+
+        return result, end - start
+
+
+    def _build_file_task_groups(
+        self,
+        id_field: str,
+        return_fields: List[str],
+        max_rows_per_chunk: Optional[int],
+    ) -> Tuple[List[List[Task]], int]:
+        task_groups: List[List[Task]] = []
+        total_rows = 0
+
+        for file_path in self._files:
+            with h5py.File(file_path, 'r') as f:
+                if id_field not in f:
+                    continue
+
+                IDFinder._validate_fields_in_file(f, id_field, return_fields)
+
+                n_rows = int(f[id_field].shape[0])
+                total_rows += n_rows
+
+                file_tasks: List[Task] = []
+                for start, end in self._iter_ranges(n_rows, max_rows_per_chunk):
+                    file_tasks.append((file_path, start, end, id_field, return_fields))
+
+                if file_tasks:
+                    task_groups.append(file_tasks)
+        return task_groups, total_rows
+
+    @staticmethod
+    def _flatten_task_groups(task_groups: List[List[Task]]) -> List[Task]:
+        tasks: List[Task] = []
+        for group in task_groups:
+            tasks.extend(group)
+        return tasks
+
+    @staticmethod
+    def _round_robin_task_groups(task_groups: List[List[Task]]) -> List[Task]:
+        tasks: List[Task] = []
+        max_group_len = max((len(group) for group in task_groups), default=0)
+
+        for index in range(max_group_len):
+            for group in task_groups:
+                if index < len(group):
+                    tasks.append(group[index])
+
+        return tasks
 
     # ------------------------------------------------------------------
     # Public API
@@ -783,7 +941,8 @@ class IDFinder:
         stop_early: bool = False,
         stop_when_found: int = 0,
         NP: int = 1,
-    ) -> dict:
+        max_rows_per_chunk: Optional[int] = 10_000_000,
+    ) -> Dict[str, np.ndarray]:
         """
         Search snapshot chunk files for rows whose *id_field* value is in *findID*.
 
@@ -796,21 +955,24 @@ class IDFinder:
             e.g. ``"PartType3/ParentID"`` or ``"PartType3/SubGroup/ID"``.
         return_fields : list of str
             HDF5 dataset paths to collect for matching rows.
+            The returned dict always includes *id_field* as well, even if it is
+            not explicitly listed here.
         stop_early : bool, optional
-            When ``True``, stop scanning once ``len(findID)`` matches have
-            been found (assumes a 1-to-1 ID mapping, e.g. TracerID lookup).
-            Ignored when ``NP > 1``. Default ``False``.
+            When ``True``, stop scanning once all unique requested IDs are found.
+            This is only meaningful for one-to-one mappings and is ignored when ``NP > 1``.
         stop_when_found : int, optional
             Advanced override: stop after exactly this many cumulative matches.
             ``0`` (default) defers to *stop_early*. Ignored when ``NP > 1``.
         NP : int, optional
-            Number of worker processes.  ``NP <= 1`` (default) runs
-            sequentially; ``NP > 1`` uses a multiprocessing pool.
+            Number of worker processes. ``NP <= 1`` runs sequentially.
+        max_rows_per_chunk : int or None, optional
+            Maximum number of rows to read per chunk.
 
         Returns
         -------
         dict
-            ``{field: np.ndarray}`` for each field in *return_fields*.
+            Mapping from field path to numpy array. The returned dict always
+            contains *id_field* and all requested *return_fields*.
 
         Examples
         --------
@@ -839,105 +1001,157 @@ class IDFinder:
                 return_fields=["PartType3/ParentID"],
                 stop_early=True,
             )
+        Notes
+        -----
+        - Sequential mode returns rows in snapshot scan order, not input-ID order.
+        - Multiprocessing mode does not guarantee a stable output order.
+        - Duplicate input IDs are deduplicated before the search.
+        - Multiprocessing scans chunk ranges in parallel.
+        - stop_early / stop_when_found are only honored in sequential mode
         """
-        if NP > 1:
-            return self._find_mp(findID, id_field, return_fields, NP=NP)
-
         # --- sequential path ---
         # Resolve the effective early-stop count:
         #   stop_when_found > 0  -> use it directly (advanced override)
         #   stop_early=True      -> stop once all requested IDs are found
         #   otherwise            -> scan every chunk file
-        _stop = stop_when_found if stop_when_found > 0 else (len(findID) if stop_early else 0)
-
         pt_num = self._parse_field_path(id_field)
         return_fields = list(return_fields)
         if id_field not in return_fields:
             return_fields.insert(0, id_field)
 
         if pt_num is not None and not self._nPart[pt_num]:
-            return {field: np.array([]) for field in return_fields}
+            return self._empty_result(return_fields)
 
-        findID        = np.asarray(findID)
-        chunks        = {field: [] for field in return_fields}
+        findID = self._normalize_ids(findID)
+        if findID.size == 0:
+            return self._empty_result(return_fields)
+
+        # Reduce redundant comparisons when the caller passes duplicated IDs.
+        findID = np.unique(findID)
+
+        stop_target = stop_when_found if stop_when_found > 0 else (len(findID) if stop_early else 0)
+
+        task_groups, total_rows = self._build_file_task_groups(
+            id_field,
+            return_fields,
+            max_rows_per_chunk,
+        )
+
+        if not task_groups:
+            return self._empty_result(return_fields)
+
+        if NP > 1:
+            tasks = self._round_robin_task_groups(task_groups)
+            return self._find_mp(
+                findID,
+                id_field,
+                return_fields,
+                NP=NP,
+                max_rows_per_chunk=max_rows_per_chunk,
+                tasks=tasks,
+                total_rows=total_rows,
+            )
+
+        tasks = self._flatten_task_groups(task_groups)
+        chunks: Dict[str, List[np.ndarray]] = {field: [] for field in return_fields}
         total_matched = 0
-        pbar_total    = self._nPart[pt_num] if pt_num is not None else int(sum(self._nPart))
 
-        with tqdm(total=pbar_total) as pbar:
-            for fileNum in range(self._numFiles):
-                with h5py.File(snapPath(self.basePath, self.snapNum, fileNum), 'r') as f:
-                    num_local = (
-                        int(f['Header'].attrs['NumPart_ThisFile'][pt_num])
-                        if pt_num is not None
-                        else int(f['Header'].attrs['NumPart_ThisFile'].sum())
-                    )
-                    if id_field in f:
-                        key_arr = f[id_field][:]
-                        mask    = np.isin(key_arr, findID)
-                        if mask.any():
-                            for field in return_fields:
-                                if field in f:
-                                    chunks[field].append(f[field][:][mask])
-                            total_matched += int(mask.sum())
-                pbar.update(num_local)
-                if _stop and total_matched >= _stop:
+        with tqdm(total=total_rows) as pbar:
+            for file_path, start, end, _, _ in tasks:
+                result_local, scanned_rows = IDFinder._worker_range_impl(
+                    file_path=file_path,
+                    start=start,
+                    end=end,
+                    findID=findID,
+                    id_field=id_field,
+                    return_fields=return_fields,
+                )
+
+                for field in return_fields:
+                    if len(result_local[field]):
+                        chunks[field].append(result_local[field])
+
+                if len(result_local[id_field]):
+                    total_matched += len(result_local[id_field])
+
+                pbar.update(scanned_rows)
+
+                if stop_target and total_matched >= stop_target:
                     break
 
-        return {
-            field: np.concatenate(chunks[field]) if chunks[field] else np.array([])
-            for field in return_fields
-        }
+        return self._merge_chunks(chunks, return_fields)
 
     def _find_mp(
         self,
-        findID,
+        findID: np.ndarray,
         id_field: str,
         return_fields: List[str],
         *,
         NP: int,
-    ) -> dict:
-        """Internal multiprocessing backend used by :meth:`find` when ``NP > 1``."""
+        max_rows_per_chunk: Optional[int],
+        tasks: Optional[List[Task]] = None,
+        total_rows: Optional[int] = None,
+    ) -> Dict[str, np.ndarray]:
+        """
+        Internal multiprocessing backend used by find when NP > 1.
+
+        Notes
+        -----
+        Results are merged in task-completion order, so the output ordering is
+        undefined and may differ between runs.
+        """
         pt_num = self._parse_field_path(id_field)
         return_fields = list(return_fields)
         if id_field not in return_fields:
             return_fields.insert(0, id_field)
 
         if pt_num is not None and not self._nPart[pt_num]:
-            return {field: np.array([]) for field in return_fields}
+            return self._empty_result(return_fields)
 
-        findIDset = set(findID)
-        file_args = [
-            (self.basePath, self.snapNum, fileNum, findIDset, id_field, return_fields)
-            for fileNum in range(self._numFiles)
-        ]
-        chunks = {field: [] for field in return_fields}
+        if tasks is None or total_rows is None:
+            task_groups, total_rows = self._build_file_task_groups(
+                id_field,
+                return_fields,
+                max_rows_per_chunk,
+            )
+            tasks = self._round_robin_task_groups(task_groups)
 
-        with mp.Pool(processes=NP) as pool:
-            with tqdm(total=self._numFiles) as pbar:
-                for result_local in pool.imap_unordered(IDFinder._worker, file_args):
+        if not tasks:
+            return self._empty_result(return_fields)
+
+        chunks: Dict[str, List[np.ndarray]] = {field: [] for field in return_fields}
+
+        with mp.Pool(
+            processes=min(NP, len(tasks)),
+            initializer=_idfinder_init_worker,
+            initargs=(findID,),
+        ) as pool:
+            with tqdm(total=total_rows) as pbar:
+                for result_local, scanned_rows in pool.imap_unordered(_idfinder_worker_range, tasks):
                     for field in return_fields:
                         if len(result_local[field]):
                             chunks[field].append(result_local[field])
-                    pbar.update(1)
+                    pbar.update(scanned_rows)
 
-        return {
-            field: np.concatenate(chunks[field]) if chunks[field] else np.array([])
-            for field in return_fields
-        }
+        return self._merge_chunks(chunks, return_fields)
+        
+        
+        
 
     def find_tracers(
         self,
-        findID: List[int],
+        findID,
         *,
         istracerid: bool = False,
         NP: int = 1,
+        max_rows_per_chunk: Optional[int] = 10_000_000,
     ) -> dict:
         """
         Find Monte-Carlo tracers by ParentID or TracerID.
 
         Parameters
         ----------
-        findID : list[int]
+        findID : array-like or scalar
             IDs to search for.
         istracerid : bool, optional
             If ``True``, match TracerIDs; otherwise match ParentIDs.
@@ -945,6 +1159,9 @@ class IDFinder:
         NP : int, optional
             Number of worker processes.  ``NP <= 1`` (default) runs
             sequentially; ``NP > 1`` uses a multiprocessing pool.
+        max_rows_per_chunk : int or None, optional
+            Maximum number of rows to read per chunk when scanning files.
+            Default is 10 million.
 
         Returns
         -------
@@ -956,14 +1173,18 @@ class IDFinder:
         Works for all snapshots in TNG50 and TNG300, but only the 20 full
         snapshots for TNG100.
 
-        When matching ParentIDs the result count may differ from
-        ``len(findID)`` because one parent can have zero or multiple tracers.
-        When matching TracerIDs the result count equals ``len(findID)``.
+        When ``NP > 1`` the result order is undefined.
+        When matching ParentIDs the result count may differ from ``len(findID)``
+        because one parent can have zero or multiple tracers.
+        When matching TracerIDs the result count should match the number of
+        unique input tracer IDs if the snapshot data are complete.
         """
         id_field      = self.TRACER_ID_FIELD if istracerid else self.TRACER_PARENT_FIELD
         return_fields = [self.TRACER_PARENT_FIELD, self.TRACER_ID_FIELD]
         # istracerid=True is 1:1 -> safe to stop early (sequential only; NP>1 ignores it)
-        raw = self.find(findID, id_field, return_fields, stop_early=istracerid, NP=NP)
+        raw = self.find(
+            findID, id_field, return_fields, 
+            stop_early=istracerid, NP=NP,max_rows_per_chunk=max_rows_per_chunk)
         return {
             'ParentID': raw[self.TRACER_PARENT_FIELD].astype(int),
             'TracerID': raw[self.TRACER_ID_FIELD].astype(int),
@@ -984,47 +1205,51 @@ def find_by_id(
     stop_early: bool = False,
     stop_when_found: int = 0,
     NP: int = 1,
-) -> dict:
+    max_rows_per_chunk: Optional[int] = 10_000_000,
+) -> Dict[str, np.ndarray]:
     """
     Search snapshot chunk files by matching IDs.
 
-    Thin wrapper around :meth:`IDFinder.find`; see that method for full
-    parameter and return-value documentation.
+    Thin wrapper around :meth:`IDFinder.find`.
 
-    Parameters
-    ----------
-    NP : int, optional
-        ``NP <= 1`` (default) runs sequentially; ``NP > 1`` uses a
-        multiprocessing pool (*stop_early* and *stop_when_found* are
-        ignored when ``NP > 1``).
+    Notes
+    -----
+    The returned dict always includes *id_field*, even if it is not explicitly
+    included in *return_fields*. When ``NP > 1`` the result order is undefined.
     """
     return IDFinder(basePath, snapNum).find(
-        findID, id_field, return_fields,
-        stop_early=stop_early, stop_when_found=stop_when_found, NP=NP,
+        findID,
+        id_field,
+        return_fields,
+        stop_early=stop_early,
+        stop_when_found=stop_when_found,
+        NP=NP,
+        max_rows_per_chunk=max_rows_per_chunk,
     )
 
 def findtracer(
     basePath: str,
     snapNum: int,
-    findID: List[int],
+    findID,
     *,
     istracerid: bool = False,
     NP: int = 1,
-) -> dict:
+    max_rows_per_chunk: Optional[int] = 10_000_000,
+) -> Dict[str, np.ndarray]:
     """
     Find MC tracers by ParentID or TracerID.
 
-    Thin wrapper around :meth:`IDFinder.find_tracers`; see that method for
-    full parameter and return-value documentation.
+    Thin wrapper around :meth:`IDFinder.find_tracers`.
 
-    Parameters
-    ----------
-    NP : int, optional
-        ``NP <= 1`` (default) runs sequentially; ``NP > 1`` uses a
-        multiprocessing pool.
+    Notes
+    -----
+    When ``NP > 1`` the result order is undefined.
     """
     return IDFinder(basePath, snapNum).find_tracers(
-        findID, istracerid=istracerid, NP=NP
+        findID,
+        istracerid=istracerid,
+        NP=NP,
+        max_rows_per_chunk=max_rows_per_chunk,
     )
 
 
