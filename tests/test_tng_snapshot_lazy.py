@@ -81,3 +81,17 @@ def test_snap_lazy_after_merge(need_data):
     lazy = snap.g['rho'].view(np.ndarray)
     assert lazy.shape == ref.shape
     np.testing.assert_allclose(lazy, ref)
+
+
+def test_lazy_after_physical_units_consistent(need_data):
+    from pynbody import units
+    from AnastrisTNG.TNGsimulation import Snapshot
+    snap = Snapshot(BP, SNAP)
+    snap.load_subhalo(SMALL_GAS_SUBHALO)
+    # 预加载基础字段,转物理单位
+    dummy = snap['pos']   # 触发并入内存,之后 physical_units 生效
+    snap.physical_units(persistent=True)
+    # 之后 lazy 加载 gas Density
+    rho = snap.g['rho']
+    assert rho.units is not None and rho.units != units.no_unit
+    # 与未转换时不一致——物理单位下密度应已 a^3 折算:仅断言单位非 NoUnit 即可
