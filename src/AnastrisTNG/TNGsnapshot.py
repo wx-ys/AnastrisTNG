@@ -1333,6 +1333,439 @@ def mH2(sim):
     return _hi_h2_masses(sim)[1]
 
 
+###############################################################################
+# Variant HI/H2 prescriptions
+# -----------------------------------------------------------------------------
+# The default ``mHI``/``mH2`` above reproduce Martini's ``TNGSource`` (Leroy et
+# al. 2008 pressure partition + Martini neutral fraction).  The derived arrays
+# below add the alternative recipes implemented by ``galcalc.py`` (Dirty-AstroPy;
+# arhstevens, Stevens et al. 2019) and by ``HI_mass_simulation.py``, each with a
+# ``_suffix`` to distinguish it from the default:
+#
+#   ``_BR06``  Blitz & Rosolowsky (2006), parameterised by Leroy et al. (2008).
+#              The atomic/molecular split of the *neutral* hydrogen follows the
+#              pressure law ``f_atomic = 1/(1 + (P/P0)**alpha)`` with
+#              ``P0 = 1.7e4 K cm^-3`` and ``alpha = 0.8``; ``P`` is the partial
+#              thermal pressure of the neutral gas.  The neutral fraction for
+#              star-forming cells uses the effective-temperature two-phase ISM
+#              (Springel & Hernquist 2003) as coded in
+#              ``galcalc.neutralFraction_SFcells``.  Identical to the default
+#              except for the tiny difference in the mean-molecular weight used
+#              for the cold ISM phase.
+#   ``_SH03``  As ``_BR06``, but the star-forming-cell neutral fraction uses the
+#              Springel & Hernquist (2003) two-phase model with the SH03
+#              feedback parameters (SN heating temperature 1e8 K and ``A0 =
+#              1e3``).  The critical density ``n_H,th`` is held at the SH03
+#              canonical value 0.13 cm^-3: the Katz et al. (1996) cooling
+#              function needed to solve it self-consistently is not available, so
+#              this variant differs from ``_BR06`` in the SH03 feedback
+#              constants rather than in a solved ``n_H,th`` (documented
+#              approximation).  Because the effective-temperature two-phase
+#              fraction saturates to ~1 for the cool ISM, ``_SH03`` and ``_BR06``
+#              agree closely; the recipes differ mainly in the molecular
+#              partition (``_GK11``/``_KMT13`` vs ``_BR06``).
+#   ``_GK11``  Gnedin & Kravtsov (2011), eq. 10 (their ``method=2``).  An
+#              iterative molecular-fraction fit that depends on the interstellar
+#              radiation field and metallicity.
+#   ``_KMT13`` Krumholz et al. (2013), eq. 10 (their ``method=4``).  An iterative
+#              fit that additionally depends on the local (dark-matter + star)
+#              density ``rho_sd``.
+#
+# Approximations
+# --------------
+# This is *not* the full Dirty-AstroPy ``galcalc`` pipeline.  Two inputs that
+# require external data are replaced as follows:
+#
+#   * The ultraviolet background radiation field, which enters ``_GK11`` and
+#     ``_KMT13`` through the dimensionless ISMF ``G0``, is approximated by a
+#     constant floor (``ISRF = 1``, in units of the Milky Way Draine 1978 field).
+#     The FG09/HM12 redshift tables are not available in this environment.
+#   * For ``_KMT13`` the local ``rho_sd`` is approximated by the local dark-matter
+#     density field ``SubfindDMDensity`` when present (converted to M_sun pc^-3),
+#     otherwise by the gas density as a documented proxy for the total local
+#     density.
+#
+# ``galcalc.u2temp``/``temp2u`` (which operate on specific energy in J kg^-1)
+# are reimplemented here in cgs (erg g^-1) so they plug straight into the
+# pressure/neutral-fraction equations used throughout this module.
+###############################################################################
+
+_P0_BR06 = 1.7e4  # K cm^-3, pressure at which H2/HI = 1 (Blitz & Rosolowsky 2006; Leroy et al. 2008)
+_ALPHA_BR06 = 0.8  # exponent of the BR06 pressure law
+_ISRF_FLOOR = 1.0  # UV background floor in MW-field units (approx. FG09, z ~ 0)
+_RHO_CGS_TO_MSUN_PC3 = units.pc.ratio('cm') ** 3 / units.Msol.ratio('g')  # g cm^-3  ->  M_sun pc^-3
+
+# galcalc internal units (M_sun, pc, yr), used by the _GK11/_KMT13 iterative fits.
+_KG_PER_MSUN = 1.989e30
+_M_PER_PC = 3.0857e16
+_S_PER_YR = 60 * 60 * 24 * 365.24
+
+
+def _galcalc_constants():
+    """Physical constants in galcalc's internal units (M_sun, pc, yr)."""
+    m_p = 1.6726219e-27 / _KG_PER_MSUN  # proton mass, M_sun
+    G = 6.67408e-11 * _KG_PER_MSUN * _S_PER_YR ** 2 / _M_PER_PC ** 3
+    k_B = 1.38064852e-23 * _S_PER_YR ** 2 / _M_PER_PC ** 2 / _KG_PER_MSUN
+    const_ratio = k_B / (m_p * G)
+    return m_p, G, k_B, const_ratio, _M_PER_PC
+
+
+def _temp2u(temp, mu, gamma=5.0 / 3.0):
+    """Temperature (K) -> specific energy (erg g^-1), for mean molecular weight ``mu``."""
+    k_B = units.k.ratio('erg K^-1')
+    m_p = units.m_p.ratio('g')
+    return temp * k_B / (mu * m_p * (gamma - 1.0))
+
+
+def _u2temp(u, mu, gamma=5.0 / 3.0):
+    """Specific energy (erg g^-1) -> temperature (K), for mean molecular weight ``mu``."""
+    k_B = units.k.ratio('erg K^-1')
+    m_p = units.m_p.ratio('g')
+    return u * mu * m_p * (gamma - 1.0) / k_B
+
+
+def _two_phase_neutral(u, nH, f_H, T_SN, A0, n_H_th, gamma=5.0 / 3.0, T_cold=1.0e3):
+    """Neutral fraction from the effective-temperature two-phase ISM.
+
+    ``u`` is the specific internal energy (erg g^-1), ``nH`` the hydrogen number
+    density (cm^-3), ``f_H`` the hydrogen mass fraction.  This implements the
+    ``galcalc.neutralFraction_SFcells`` / ``neutralFraction_SFcells_SH03`` formula.
+    The cold phase is fully neutral (mu_c = 4/(1 + 3 f_H)) and the hot phase has
+    helium fully ionised (mu_h = 4/(8 - 5(1 - f_H))).
+    """
+    mu_c = 4.0 / (1.0 + 3.0 * f_H)
+    mu_h = 4.0 / (8.0 - 5.0 * (1.0 - f_H))
+    u_cold = _temp2u(T_cold, mu_c, gamma)
+    u_SN = _temp2u(T_SN, mu_h, gamma)
+    A = A0 * (nH / n_H_th) ** (-0.8)
+    u_hot = u_SN / (1.0 + A) + u_cold
+    return np.clip((u_hot - u) / (u_hot - u_cold), 0.0, 1.0)
+
+
+def _gas_neutral_fraction(sim, sf_kind, gamma=5.0 / 3.0):
+    """Neutral hydrogen mass fraction ``fneutral`` per gas cell.
+
+    Non-star-forming cells use ``NeutralHydrogenAbundance`` when available,
+    otherwise fall back to the effective-temperature two-phase ISM.  Star-forming
+    cells use a two-phase fraction chosen by ``sf_kind``:
+      * ``'SFcells'`` - ``galcalc.neutralFraction_SFcells`` (T_SN = 5.73e7, A0=573, n_H,th = 0.13)
+      * ``'SH03'``    - ``galcalc.neutralFraction_SFcells_SH03`` feedback constants
+                        (T_SN = 1e8, A0=1e3; n_H,th held at the SH03 value 0.13 cm^-3)
+    """
+    XH = sim['XH'].view(np.ndarray).astype(np.float64)
+    u = sim['u'].in_units('cm^2 s^-2').view(np.ndarray)
+    rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)
+    nH = rho * XH / units.m_p.ratio('g')
+
+    if sf_kind == 'SH03':
+        # SH03 two-phase constants (T_SN = 1e8 K, A0 = 1e3); n_H,th is kept at the
+        # canonical SH03 value 0.13 cm^-3 because the Katz+96 cooling-function
+        # table required to solve it self-consistently is not available (approx.).
+        n_H_th = 0.13
+        T_SN, A0 = 1.0e8, 1.0e3
+    else:
+        n_H_th = 0.13
+        T_SN, A0 = 5.73e7, 573.0
+    fneutral_two = _two_phase_neutral(u, nH, XH, T_SN, A0, n_H_th, gamma)
+
+    if 'NeutralHydrogenAbundance' in sim:
+        fneutral = sim['NeutralHydrogenAbundance'].view(np.ndarray).copy()
+        sfr = sim['sfr'].view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+        fneutral[sfr > 0] = fneutral_two[sfr > 0]
+    else:
+        from warnings import warn
+
+        warn(
+            f"NeutralHydrogenAbundance not available for mini snapshots,"
+            f" approximating the neutral fraction (sf_kind={sf_kind!r}) for all gas.",
+            UserWarning,
+        )
+        fneutral = fneutral_two
+    return fneutral
+
+
+def _metallicity(sim):
+    """Total metal mass fraction ``Z`` (excluding H and He) per gas cell."""
+    if 'GFM_Metals' in sim:
+        metals = sim['GFM_Metals'].view(np.ndarray)
+        Z = metals[:, 2:].sum(axis=1).astype(np.float64)
+    else:
+        from warnings import warn
+
+        warn("GFM_Metals not available; assuming solar metallicity Z = 0.0127.", UserWarning)
+        Z = np.full(len(sim['mass']), 0.0127, dtype=np.float64)
+    Z[Z < 1e-5] = 1e-5  # floor (BBN); mirrors galcalc
+    return Z
+
+
+def _br06_partition(fneutral, P_K_cm3, P0=_P0_BR06, alpha=_ALPHA_BR06):
+    """Atomic fraction of the neutral hydrogen, Blitz & Rosolowsky (2006) / Leroy et al. (2008)."""
+    R_mol = (fneutral * P_K_cm3 / P0) ** alpha
+    return 1.0 / (1.0 + R_mol)
+
+
+def _molecular_fraction_gk11(mass, sfr, Z, X, rho, temp, fneutral,
+                             sigma_sfr0=1e-9, f_esc=0.15, isrf_floor=_ISRF_FLOOR,
+                             it_max=300, rtol=5e-3):
+    """H2/(HI+H2) from Gnedin & Kravtsov (2011) eq. 10 (galcalc ``method=2``).
+
+    Inputs use galcalc's internal units: ``mass`` M_sun, ``rho`` M_sun pc^-3,
+    ``temp`` K, ``sfr`` M_sun yr^-1; ``X`` is the hydrogen mass fraction (used
+    in place of galcalc's metallicity-to-X fitting function).
+    """
+    m_p, G, k_B, const_ratio, m_per_pc = _galcalc_constants()
+    m_per_pc_cm = m_per_pc * 100.0
+    denom = m_p * m_per_pc_cm ** 3  # M_sun per cm^3 of volume, for n_H
+    f_th = 1.0
+    Y = 1.0 - X - Z
+    n_H = X * rho / denom
+
+    gamma = 5.0 / 3.0
+    mu = (X + 4.0 * Y) / ((2.0 - fneutral) * (X + Y))
+    fzero = fneutral <= 0
+    fneutral = np.where(fzero, 1e-6, fneutral)
+
+    D_MW = Z / 0.0127
+    f_H2_old = np.zeros_like(fneutral)
+
+    for it in range(it_max):
+        f_mol = X * fneutral * f_H2_old / (X + Y)
+        gamma = (5.0 / 3.0) * (1.0 - f_mol) + 1.4 * f_mol
+        mu = (X + 4.0 * Y) * (1.0 + (1.0 - fneutral) / fneutral) / (
+            (X + Y) * (1.0 + 2.0 * (1.0 - fneutral) / fneutral - f_H2_old / 2.0)
+        )
+        Sigma = np.sqrt(gamma * const_ratio * f_th * rho * temp / mu)  # M_sun pc^-2
+        Sigma_n = fneutral * X * Sigma
+        area = mass / Sigma
+        Sigma_SFR = sfr / area
+        G0 = np.maximum(isrf_floor, f_esc * Sigma_SFR / sigma_sfr0)
+        D_star = 1.5e-3 * np.log(1.0 + (3.0 * G0) ** 1.7)
+        alpha = 2.5 * G0 / (1.0 + (0.5 * G0) ** 2.0)
+        s = 0.04 / (D_star + D_MW)
+        g = (1.0 + alpha * s + s * s) / (1.0 + s)
+        Lambda = np.log(1.0 + g * D_MW ** (3.0 / 7.0) * (G0 / 15.0) ** (4.0 / 7.0))
+        Sigma_c = 20.0 * Lambda ** (4.0 / 7.0) / (D_MW * np.sqrt(1.0 + G0 * D_MW ** 2.0))
+        f_H2 = (1.0 + Sigma_c / Sigma_n) ** (-2.0)
+        if np.allclose(f_H2[~fzero], f_H2_old[~fzero], rtol=rtol):
+            break
+        f_H2_old = f_H2.copy()
+
+    f_H2 = np.where(fzero, 0.0, f_H2)
+    return f_H2
+
+
+def _molecular_fraction_kmt13(mass, sfr, Z, X, rho, temp, fneutral, rho_sd,
+                              sigma_sfr0=1e-9, f_esc=0.15, isrf_floor=_ISRF_FLOOR,
+                              it_max=300, rtol=5e-3):
+    """H2/(HI+H2) from Krumholz et al. (2013) eq. 10 (galcalc ``method=4``).
+
+    Inputs use galcalc's internal units; ``rho_sd`` is the local (DM + star)
+    density in M_sun pc^-3.
+    """
+    m_p, G, k_B, const_ratio, m_per_pc = _galcalc_constants()
+    m_per_pc_cm = m_per_pc * 100.0
+    denom = m_p * m_per_pc_cm ** 3
+    f_th = 1.0
+    Y = 1.0 - X - Z
+    n_H = X * rho / denom
+
+    gamma = 5.0 / 3.0
+    mu = (X + 4.0 * Y) / ((2.0 - fneutral) * (X + Y))
+    fzero = fneutral <= 0
+    fneutral = np.where(fzero, 1e-6, fneutral)
+
+    D_MW = Z / 0.0127
+    f_H2_old = np.zeros_like(fneutral)
+
+    f_c = 5.0  # clumping factor
+    alpha = 5.0  # turbulence/magnetic-to-thermal pressure
+    zeta_d = 0.33
+    f_w = 0.5
+    c_w = 8e3 / m_per_pc * _S_PER_YR  # warm-medium sound speed, internal units
+    T_CNMmax = 243.0  # K, max CNM temperature
+
+    for it in range(it_max):
+        f_mol = X * fneutral * f_H2_old / (X + Y)
+        gamma = (5.0 / 3.0) * (1.0 - f_mol) + 1.4 * f_mol
+        mu = (X + 4.0 * Y) * (1.0 + (1.0 - fneutral) / fneutral) / (
+            (X + Y) * (1.0 + 2.0 * (1.0 - fneutral) / fneutral - f_H2_old / 2.0)
+        )
+        Sigma = np.sqrt(gamma * const_ratio * f_th * rho * temp / mu)
+        Sigma_n = fneutral * X * Sigma
+        G0 = np.maximum(isrf_floor, f_esc * sfr / mass * Sigma / sigma_sfr0)
+
+        n_CNM2p = 23.0 * G0 * 4.1 / (1.0 + 3.1 * D_MW ** 0.365)
+        R_H2 = f_H2_old / np.maximum(1.0 - f_H2_old, 1e-12)
+        Sigma_HI = np.maximum((1.0 - f_H2_old) * Sigma_n, 1e-12)
+        frac = 32.0 * zeta_d * alpha * f_w * c_w * c_w * rho_sd / (np.pi * G * Sigma_HI ** 2.0)
+        P_th = np.pi * G * Sigma_HI ** 2.0 / (4.0 * alpha) * (
+            1.0 + 2.0 * R_H2 + np.sqrt((1.0 + 2.0 * R_H2) ** 2.0 + frac)
+        )
+        n_CNMhydro = P_th / (1.1 * k_B * T_CNMmax) / m_per_pc_cm ** 3.0
+        n_CNM = np.maximum(n_CNM2p, n_CNMhydro)
+        chi = 7.2 * G0 / (0.1 * n_CNM)
+        tau_c = 0.066 * f_c * D_MW * Sigma_n
+        s = np.log(1.0 + 0.6 * chi + 0.01 * chi * chi) / (0.6 * tau_c)
+        f_H2 = np.zeros_like(fneutral)
+        mask = s < 2.0
+        f_H2[mask] = 1.0 - 0.75 * s[mask] / (1.0 + 0.25 * s[mask])
+        if np.allclose(f_H2[~fzero], f_H2_old[~fzero], rtol=rtol):
+            break
+        f_H2_old = f_H2.copy()
+
+    f_H2 = np.where(fzero, 0.0, f_H2)
+    return f_H2
+
+
+def _rhosd(sim):
+    """Local (dark-matter + star) density ``rho_sd`` in M_sun pc^-3.
+
+    Prefers the ``SubfindDMDensity`` local dark-matter field; falls back to the
+    gas density (documented proxy) when it is not loaded, since no cheap per-cell
+    dark-matter+star density is available in a gas-only sub-snapshot.
+    """
+    if 'SubfindDMDensity' in sim:
+        return sim['SubfindDMDensity'].in_units('Msol pc^-3').view(np.ndarray)
+    from warnings import warn
+
+    warn(
+        "SubfindDMDensity not available; approximating rho_sd with the gas density.",
+        UserWarning,
+    )
+    return sim['rho'].in_units('g cm^-3').view(np.ndarray) * _RHO_CGS_TO_MSUN_PC3
+
+
+def _variant_fields(sim):
+    """Shared physical arrays (cgs) needed by all the HI/H2 variants."""
+    XH = sim['XH'].view(np.ndarray).astype(np.float64)
+    u = sim['u'].in_units('cm^2 s^-2').view(np.ndarray)  # erg g^-1
+    rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)  # g cm^-3
+    mascgs = sim['mass'].in_units('g').view(np.ndarray)  # g
+    masmsun = sim['mass'].in_units('Msol').view(np.ndarray)  # M_sun
+    sfr = sim['sfr'].in_units('Msol yr^-1').view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+    return XH, u, rho, mascgs, masmsun, sfr
+
+
+def _variant_msun_pc3(sim):
+    return sim['rho'].in_units('g cm^-3').view(np.ndarray) * _RHO_CGS_TO_MSUN_PC3
+
+
+def _variant_temp(sim, u_cgs, gamma=5.0 / 3.0):
+    """Temperature (K) from specific energy, using mu = the fitting default of 1.0."""
+    return _u2temp(u_cgs, 1.0, gamma)
+
+
+def _br06_hih2(sim):
+    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    k_B = units.k.ratio('erg K^-1')
+    gamma = 5.0 / 3.0
+    fneutral = _gas_neutral_fraction(sim, 'SFcells')
+    P_cgs = (gamma - 1.0) * rho * u  # erg cm^-3 (total thermal)
+    P_K_cm3 = P_cgs / k_B  # K cm^-3
+    fatomic = _br06_partition(fneutral, P_K_cm3)
+    Msun = units.Msol.ratio('g')
+    mHI = SimArray(mascgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI.sim = sim
+    mH2 = SimArray(mascgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2.sim = sim
+    return mHI, mH2
+
+
+def _sh03_hih2(sim):
+    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    k_B = units.k.ratio('erg K^-1')
+    gamma = 5.0 / 3.0
+    fneutral = _gas_neutral_fraction(sim, 'SH03')
+    P_cgs = (gamma - 1.0) * rho * u
+    P_K_cm3 = P_cgs / k_B
+    fatomic = _br06_partition(fneutral, P_K_cm3)
+    Msun = units.Msol.ratio('g')
+    mHI = SimArray(mascgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI.sim = sim
+    mH2 = SimArray(mascgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2.sim = sim
+    return mHI, mH2
+
+
+def _gk11_hih2(sim):
+    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    gamma = 5.0 / 3.0
+    fneutral = _gas_neutral_fraction(sim, 'SFcells')
+    Z = _metallicity(sim)
+    rho_pc3 = _variant_msun_pc3(sim)
+    temp = _variant_temp(sim, u)
+    f_H2 = _molecular_fraction_gk11(masmsun, sfr, Z, XH, rho_pc3, temp, fneutral)
+    mHI = SimArray(masmsun * XH * fneutral * (1.0 - f_H2), units.Msol)
+    mHI.sim = sim
+    mH2 = SimArray(masmsun * XH * fneutral * f_H2, units.Msol)
+    mH2.sim = sim
+    return mHI, mH2
+
+
+def _kmt13_hih2(sim):
+    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    gamma = 5.0 / 3.0
+    fneutral = _gas_neutral_fraction(sim, 'SFcells')
+    Z = _metallicity(sim)
+    rho_pc3 = _variant_msun_pc3(sim)
+    temp = _variant_temp(sim, u)
+    rho_sd = _rhosd(sim)
+    f_H2 = _molecular_fraction_kmt13(masmsun, sfr, Z, XH, rho_pc3, temp, fneutral, rho_sd)
+    mHI = SimArray(masmsun * XH * fneutral * (1.0 - f_H2), units.Msol)
+    mHI.sim = sim
+    mH2 = SimArray(masmsun * XH * fneutral * f_H2, units.Msol)
+    mH2.sim = sim
+    return mHI, mH2
+
+
+@derived_array
+def mHI_BR06(sim):
+    """Atomic hydrogen (HI) mass, ``_BR06`` (Blitz & Rosolowsky 2006 / Leroy et al. 2008)."""
+    return _br06_hih2(sim)[0]
+
+
+@derived_array
+def mH2_BR06(sim):
+    """Molecular hydrogen (H2) mass, ``_BR06`` (Blitz & Rosolowsky 2006 / Leroy et al. 2008)."""
+    return _br06_hih2(sim)[1]
+
+
+@derived_array
+def mHI_SH03(sim):
+    """Atomic hydrogen (HI) mass, ``_SH03`` (Springel & Hernquist 2003 two-phase + BR06 partition)."""
+    return _sh03_hih2(sim)[0]
+
+
+@derived_array
+def mH2_SH03(sim):
+    """Molecular hydrogen (H2) mass, ``_SH03`` (Springel & Hernquist 2003 two-phase + BR06 partition)."""
+    return _sh03_hih2(sim)[1]
+
+
+@derived_array
+def mHI_GK11(sim):
+    """Atomic hydrogen (HI) mass, ``_GK11`` (Gnedin & Kravtsov 2011 eq. 10)."""
+    return _gk11_hih2(sim)[0]
+
+
+@derived_array
+def mH2_GK11(sim):
+    """Molecular hydrogen (H2) mass, ``_GK11`` (Gnedin & Kravtsov 2011 eq. 10)."""
+    return _gk11_hih2(sim)[1]
+
+
+@derived_array
+def mHI_KMT13(sim):
+    """Atomic hydrogen (HI) mass, ``_KMT13`` (Krumholz et al. 2013 eq. 10)."""
+    return _kmt13_hih2(sim)[0]
+
+
+@derived_array
+def mH2_KMT13(sim):
+    """Molecular hydrogen (H2) mass, ``_KMT13`` (Krumholz et al. 2013 eq. 10)."""
+    return _kmt13_hih2(sim)[1]
+
+
 @SimDict.setter
 def read_Snap_properties(f, SnapshotHeader):
     """
