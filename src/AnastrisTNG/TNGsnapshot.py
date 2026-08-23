@@ -1232,6 +1232,107 @@ def mu(sim):
     return muu.in_units('m_p')
 
 
+# gas
+def _hi_h2_masses(sim):
+    """
+    Per-particle atomic (HI) and molecular (H2) hydrogen masses, in ``Msol``.
+
+    Follows the same prescription as Martini's ``TNGSource`` (see
+    ``martini/sources/tng_source.py``), i.e. Marinacci et al. 2017, Diemer et al.
+    2018 and Leroy et al. 2008:
+
+    - the neutral hydrogen fraction ``fneutral`` is taken from the TNG
+      ``NeutralHydrogenAbundance`` field (``nH0/nH``) and is overridden for
+      star-forming cells by the effective-temperature two-phase ISM expression
+      of Springel & Hernquist 2003 (the tabulated abundance there is based on the
+      effective, not physical, temperature).  For mini snapshots, which lack
+      ``NeutralHydrogenAbundance``, the same two-phase expression is used for all
+      gas as an approximation.
+    - the atomic fraction ``fatomic`` of the *neutral* hydrogen follows the
+      pressure-based partition of Leroy et al. 2008, ``fatomic = 1 / (1 +
+      (P/1.7e4 K cm^-3)^0.8)``, where ``P`` is the partial thermal pressure of the
+      neutral gas (Marinacci et al. 2017 / Diemer et al. 2018 eq. 6).
+
+    Then, with gas mass ``m`` and hydrogen mass fraction ``X_H``::
+
+        mHI = m * X_H * fneutral * fatomic
+        mH2 = m * X_H * fneutral * (1 - fatomic)
+    """
+    gamma = 5.0 / 3.0
+    k_B = units.k.ratio('erg K^-1')
+    m_p = units.m_p.ratio('g')
+
+    XH = sim['XH'].view(np.ndarray).astype(np.float64)
+    xe = sim['ElectronAbundance'].view(np.ndarray)
+    u = sim['u'].in_units('cm^2 s^-2').view(np.ndarray)  # specific energy, erg g^-1
+    rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)  # mass density, g cm^-3
+    m_cgs = sim['mass'].in_units('g').view(np.ndarray)  # gas mass, g
+
+    # mean molecular weight in proton masses, from the TNG FAQ
+    mu = 4.0 / (1.0 + 3.0 * XH + 4.0 * XH * xe)
+    # hydrogen number density, cm^-3
+    nH = rho * XH / m_p
+
+    # effective-temperature two-phase ISM (Springel & Hernquist 2003; Stevens 19):
+    # cold, fully neutral
+    mu_c = 4.0 / (1.0 + 3.0 * XH) * m_p
+    u_c = k_B * 1e3 / (mu_c * (gamma - 1.0))  # erg g^-1, T_c = 1e3 K
+    # hot, He fully ionised
+    mu_h = 4.0 / (3.0 + 5.0 * XH) * m_p
+    T_h = 1e3 + 5.73e7 / (1.0 + 573.0 * np.maximum(1.0, nH / 0.13) ** -0.8)  # K
+    u_h = k_B * T_h / (mu_h * (gamma - 1.0))  # erg g^-1
+    fneutral_coldhot = np.clip((u_h - u) / (u_h - u_c), 0.0, 1.0)
+
+    # neutral hydrogen fraction
+    if 'NeutralHydrogenAbundance' in sim:
+        fneutral = sim['NeutralHydrogenAbundance'].view(np.ndarray).copy()
+        sfr = sim['sfr'].view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+        fneutral[sfr > 0] = fneutral_coldhot[sfr > 0]
+    else:
+        from warnings import warn
+
+        warn(
+            "NeutralHydrogenAbundance not available for mini snapshots,"
+            " approximating the neutral fraction with the effective-temperature"
+            " two-phase ISM (Springel & Hernquist 2003) - to avoid this use a"
+            " full snapshot instead.",
+            UserWarning,
+        )
+        fneutral = fneutral_coldhot
+
+    # partial thermal pressure of the neutral gas, K cm^-3
+    P = (gamma - 1.0) * u * fneutral * rho / k_B
+    # atomic fraction of the neutral hydrogen (Leroy et al. 2008)
+    fatomic = 1.0 / (1.0 + (P / 1.7e4) ** 0.8)
+
+    Msun = units.Msol.ratio('g')
+    mHI = SimArray(m_cgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI.sim = sim
+    mH2 = SimArray(m_cgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2.sim = sim
+    return mHI, mH2
+
+
+# gas
+@derived_array
+def mHI(sim):
+    """Atomic hydrogen (HI) mass per gas particle, in ``Msol``.
+
+    Computed as m * X_H * fneutral * fatomic following :class:`martini.sources.tng_source.TNGSource`.
+    """
+    return _hi_h2_masses(sim)[0]
+
+
+# gas
+@derived_array
+def mH2(sim):
+    """Molecular hydrogen (H2) mass per gas particle, in ``Msol``.
+
+    Computed as m * X_H * fneutral * (1 - fatomic) following :class:`martini.sources.tng_source.TNGSource`.
+    """
+    return _hi_h2_masses(sim)[1]
+
+
 @SimDict.setter
 def read_Snap_properties(f, SnapshotHeader):
     """
