@@ -631,13 +631,15 @@ class Snapshot(SimSnap):
             )
 
         lenType = subset['lenType']
-        order = kwargs.get('order', self.load_particle_para['particle_field'])        
+        order = kwargs.get('order', self.load_particle_para['particle_field'])
+        from AnastrisTNG.TNGload import _LazySnap
         f = new(
             dm=int(lenType[1]),
             star=int(lenType[4]),
             gas=int(lenType[0]),
             bh=int(lenType[5]),
             order=order,
+            class_=_LazySnap,
         )
 
         for party in self.load_particle_para['particle_field'].split(","):
@@ -756,6 +758,14 @@ class Snapshot(SimSnap):
                         f.bh['HaloID'] = SimArray(
                             -1 * np.ones(len(f.bh)).astype(np.int32)
                         )
+        # ---- lazy:记录每个已加载粒子在原始文件里的行号,并绑定 ctx ----
+        fam_pt = {'dm': 1, 'star': 4, 'gas': 0, 'bh': 5}
+        for fam, ptn in fam_pt.items():
+            if len(f[get_family(fam)]) > 0:
+                off = int(subset['offsetType'][ptn])
+                cnt = int(subset['lenType'][ptn])
+                f._loaded_index[fam] = np.arange(off, off + cnt, dtype=np.int64)
+        f._lazy_ctx = self._lazy_ctx.bind_to(f)
         f.properties = deepcopy(self.properties)
         for i in f.properties:
             if isinstance(f.properties[i], SimArray):
