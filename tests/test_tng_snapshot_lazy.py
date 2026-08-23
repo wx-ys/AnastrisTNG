@@ -51,3 +51,33 @@ def test_load_particle_lazy_dm_pot(need_data):
     ref = loadSubset(BP, SNAP, 'dm', ['Potential'], subset=sub)['Potential']
     lazy = f.dm['pot'].view(np.ndarray)
     np.testing.assert_allclose(lazy, ref)
+
+
+def test_merge_carries_loaded_index(need_data):
+    from AnastrisTNG.TNGsimulation import Snapshot
+    from AnastrisTNG.illustris_python.snapshot import getSnapOffsets
+    snap = Snapshot(BP, SNAP)
+    snap.load_subhalo(DM_SUBHALO)          # dm 3603
+    first_dm = snap._loaded_index['dm'].copy()
+    snap.load_subhalo(SMALL_GAS_SUBHALO)   # dm 390
+    dm = snap._loaded_index['dm']
+    assert len(dm) == len(first_dm) + 390
+    # 前一段应与第一次加载的一致(保序拼接)
+    np.testing.assert_array_equal(dm[:len(first_dm)], first_dm)
+    # 第二段应是子结构 3052 的 dm 块
+    sub = getSnapOffsets(BP, SNAP, SMALL_GAS_SUBHALO, 'Subhalo')
+    off = int(sub['offsetType'][1]); cnt = int(sub['lenType'][1])
+    np.testing.assert_array_equal(dm[len(first_dm):], np.arange(off, off + cnt))
+
+
+def test_snap_lazy_after_merge(need_data):
+    """端到端:load_subhalo 后,merge/cover 已把 _loaded_index 传播到 self,故 snap.g['rho'] 可 lazy 读。"""
+    from AnastrisTNG.TNGsimulation import Snapshot
+    from AnastrisTNG.illustris_python.snapshot import getSnapOffsets, loadSubset
+    snap = Snapshot(BP, SNAP)
+    snap.load_subhalo(SMALL_GAS_SUBHALO)
+    sub = getSnapOffsets(BP, SNAP, SMALL_GAS_SUBHALO, 'Subhalo')
+    ref = loadSubset(BP, SNAP, 'gas', ['Density'], subset=sub)['Density']
+    lazy = snap.g['rho'].view(np.ndarray)
+    assert lazy.shape == ref.shape
+    np.testing.assert_allclose(lazy, ref)
