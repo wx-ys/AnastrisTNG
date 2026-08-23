@@ -153,6 +153,27 @@ class Snapshot(SimSnap):
                 x: parameter_all_Description('snapshots', 'bh', x)
                 for x in list(__file_pa['PartType5'].keys())
             }
+            # ---- lazy-load 支持 ----
+            from AnastrisTNG.TNGload import _LazyCtx
+            self._loaded_index = {f: np.array([], dtype=np.int64) for f in ('dm', 'gas', 'star', 'bh')}
+            self._lazy_ctx = _LazyCtx(self)
+            # 每 family -> HDF 字段集合(pynbody 名)。与上面 loadable_parameters 扫描同源,复用 __file_pa。
+            # 注意:一律用字符串 ('dm'/'gas'/'star'/'bh') 作 dict key(与 _loaded_index 一致)。
+            fam_hdf_keys = {}
+            fam_loadable = {}
+            for fam, ptnum in (('gas', 0), ('star', 4), ('dm', 1), ('bh', 5)):
+                group = 'PartType' + str(ptnum)
+                if group not in __file_pa:
+                    continue
+                keys = list(__file_pa[group].keys())
+                fam_hdf_keys[fam] = set(keys)
+                fam_loadable[fam] = [snapshot_pa_name(k) for k in keys]
+            try:
+                self._snap_offsets = getSnapOffsets(BasePath, Snap, 1, 'Group')['snapOffsets']
+            except Exception:
+                # 读不到 offsets 时仍允许构造 Snapshot(仅失去 lazy 能力),不破坏非 lazy 用法。
+                self._snap_offsets = None
+            self._lazy_ctx.set_snapshot_meta(BasePath, Snap, self._snap_offsets, fam_loadable, fam_hdf_keys)
     @staticmethod
     def parameter_describe(table: str, contents: str, parameters: str) -> str:
         '''
@@ -463,6 +484,12 @@ class Snapshot(SimSnap):
             print('The pos and vel of the snapshot particles')
             print('are not in the coordinate system in the original box.')
             print('New particles can not be loaded')
+
+    def loadable_keys(self, fam=None):
+        return self._lazy_ctx.loadable_keys(fam)
+
+    def _load_array(self, name, fam=None):
+        self._lazy_ctx.load_array(name, fam)
 
     def load_particle(
         self, ID: int, groupType: str = 'Subhalo', decorate=True, **kwargs
