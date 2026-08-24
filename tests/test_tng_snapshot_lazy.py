@@ -94,3 +94,29 @@ def test_lazy_after_physical_units_consistent(need_data):
     assert rho.units is not None and rho.units != units.no_unit
     # physical_units 必须真的把 lazy 加载的 rho 从文件原始 comoving 单位转走了
     assert rho.units != snapshot_units('Density')
+
+
+def test_load_halo_masked_merge_keeps_loaded_index(need_data):
+    """load_halo 的掩码合并路径必须保留先前已加载(非目标 halo)粒子的行索引。"""
+    from AnastrisTNG.TNGsimulation import Snapshot
+    # SMALL_GAS_SUBHALO 与 DM_SUBHALO 同属 halo 0(且 halo 0 规模过大,无法用于 load_halo);
+    # 换用分属两个小 halo 的子结构,既触发掩码合并又保证 load_halo 轻量。
+    subhalo_a = 982281   # halo 26055 (gas=161 dm=9447 star=4)
+    subhalo_b = 982280   # halo 26054 (dm=9623 star=18)
+    snap = Snapshot(BP, SNAP)
+    snap.load_subhalo(subhalo_a)
+    ha = int(np.unique(snap['HaloID'])[0])
+    snap.load_subhalo(subhalo_b)
+    halos = np.unique(snap['HaloID'])
+    if not (halos != ha).any():
+        pytest.skip("chosen subhalos share one halo; cannot exercise masked merge")
+    snap.load_halo(ha)
+    for fam_obj in snap.ancestor.families():
+        fam = getattr(fam_obj, 'name', fam_obj)
+        fs = snap._get_family_slice(fam_obj)
+        n = len(snap[fs])
+        assert len(snap._loaded_index[fam]) == n, (
+            "%s: lazy index length %d != particle count %d"
+            % (fam, len(snap._loaded_index[fam]), n)
+        )
+    assert snap.g['rho'].view(np.ndarray).shape == (len(snap.g),)

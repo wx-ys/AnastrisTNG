@@ -386,7 +386,18 @@ class Snapshot(SimSnap):
             if -1 in subhaloIDover:
                 subhaloIDover.remove(-1)
             if len(subhaloIDover) > 0:
-                fmerge = simsnap_merge(self[self['HaloID'] != haloID], f)
+                keep_mask = self['HaloID'] != haloID
+                f1 = self[keep_mask]
+                # 掩码子视图不继承 _loaded_index;在合并前按掩码重排/重映射已加载粒子的原始行号,
+                # 否则之前加载(非本 halo)粒子的行索引会在 simsnap_merge 中丢失。
+                f1._loaded_index = {}
+                for fam_obj in self.ancestor.families():
+                    fam_str = getattr(fam_obj, 'name', fam_obj)
+                    f1._loaded_index[fam_str] = np.asarray(
+                        self._loaded_index.get(fam_str, np.array([], dtype=np.int64)),
+                        dtype=np.int64,
+                    )[keep_mask[self._get_family_slice(fam_obj)]]
+                fmerge = simsnap_merge(f1, f)
             else:
                 fmerge = simsnap_merge(self, f)
             simsnap_cover(self, fmerge)
