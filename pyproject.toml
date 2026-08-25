@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "AnastrisTNG"
+description = "IllustrisTNG simulation data analysis"
+readme = {file = "README.md", content-type = "text/markdown"}
+requires-python = ">=3.8"
+license = {text = "MIT"}
+keywords = ["illustris", "TNG", "cosmology", "simulation", "galaxy"]
+authors = [
+  { name = "Shuai Lu", email = "lushuai@stu.xmu.edu.cn" },
+]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: OS Independent",
+]
+dependencies = [
+  "h5py",
+  "numba",
+  "numpy",
+  "pynbody>=1.4.0",
+  "scipy",
+  "six",
+  "tqdm",
+  "Cython<=0.29.35; python_version == '3.8'",
+  "numpy>=1.21.6,<1.26; python_version == '3.8'",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/wx-ys/AnastrisTNG"
+Repository = "https://github.com/wx-ys/AnastrisTNG"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "AnastrisTNG.__version__"}
