@@ -838,7 +838,9 @@ def tform(
     The function uses the 'aform' array to compute the formation time, which is then converted to Gyr.
     The calculation requires cosmological parameters like `omegaM0` and `h` from the simulation properties.
     """
-    if 'aform' not in sim:
+    try:
+        sim['aform']
+    except (KeyError, OSError):
         print('need aform to cal: GFM_StellarFormationTime')
     import numpy as np
 
@@ -884,7 +886,9 @@ def U_mag(sim):
     The details on the four SDSS filters can be found in Stoughton et al. 2002, section 3.2.1.
     """
 
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 0]
@@ -898,7 +902,9 @@ def U_lum(sim):
 @derived_array
 def B_mag(sim):
     """Vega magnitudes"""
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 1]
@@ -912,7 +918,9 @@ def B_lum(sim):
 @derived_array
 def V_mag(sim):
     """ Vega magnitudes """
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 2]
@@ -926,7 +934,9 @@ def V_lum(sim):
 @derived_array
 def K_mag(sim):
     """ Vega magnitudes"""
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 3]
@@ -940,7 +950,9 @@ def K_lum(sim):
 @derived_array
 def g_mag(sim):
     """AB magnitudes """
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 4]
@@ -954,7 +966,9 @@ def g_lum(sim):
 @derived_array
 def r_mag(sim):
     """AB magnitudes """
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 5]
@@ -968,7 +982,9 @@ def r_lum(sim):
 @derived_array
 def i_mag(sim):
     """AB magnitudes """
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 6]
@@ -982,7 +998,9 @@ def i_lum(sim):
 @derived_array
 def z_mag(sim):
     """AB magnitudes """
-    if 'GFM_StellarPhotometrics' not in sim:
+    try:
+        sim['GFM_StellarPhotometrics']
+    except (KeyError, OSError):
         print("Need 'GFM_StellarPhotometrics' of star ")
 
     return sim['GFM_StellarPhotometrics'][:, 7]
@@ -995,7 +1013,9 @@ def z_lum(sim):
 @derived_array
 def metals(sim):
     """ """
-    if 'GFM_Metals' not in sim:
+    try:
+        sim['GFM_Metals']
+    except (KeyError, OSError):
         print("Need 'GFM_Metals'")
 
     return sim['GFM_Metals']
@@ -1014,7 +1034,9 @@ def temp(sim):
     For more information, refer to Sec.6 of the TNG FAQ:
     https://www.tng-project.org/data/docs/faq/
     """
-    if 'u' not in sim:
+    try:
+        sim['u']
+    except (KeyError, OSError):
         print('need gas InternalEnergy to cal: InternalEnergy')
     gamma = 5.0 / 3
     UnitEtoUnitM = ((units.kpc / units.Gyr).in_units('km s^-1')) ** 2
@@ -1202,10 +1224,10 @@ def XH(sim):
     If the 'GFM_Metals' data is available in the simulation, the hydrogen mass fraction is extracted
     from this data. If 'GFM_Metals' is not present, a default value of 0.76 is used.
     """
-    if 'GFM_Metals' in sim:
+    try:
         Xh = sim['GFM_Metals'].view(np.ndarray).T[0]
         return SimArray(Xh)
-    else:
+    except (KeyError, OSError):
         print('No GFM_Metals, use hydrogen mass fraction XH=0.76')
         return SimArray(0.76 * np.ones(len(sim)))
 
@@ -1220,7 +1242,9 @@ def mu(sim):
     abundance. The formula used is:
         μ = 4 / (1 + 3 * XH + 4 * XH * ElectronAbundance)
     """
-    if 'ElectronAbundance' not in sim:
+    try:
+        sim['ElectronAbundance']
+    except (KeyError, OSError):
         print('need gas ElectronAbundance to cal: ElectronAbundance')
     muu = SimArray(
         4
@@ -1284,11 +1308,14 @@ def _hi_h2_masses(sim):
     fneutral_coldhot = np.clip((u_h - u) / (u_h - u_c), 0.0, 1.0)
 
     # neutral hydrogen fraction
-    if 'NeutralHydrogenAbundance' in sim:
+    try:
         fneutral = sim['NeutralHydrogenAbundance'].view(np.ndarray).copy()
-        sfr = sim['sfr'].view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+        try:
+            sfr = sim['sfr'].view(np.ndarray)
+        except (KeyError, OSError):
+            sfr = np.zeros_like(XH)
         fneutral[sfr > 0] = fneutral_coldhot[sfr > 0]
-    else:
+    except (KeyError, OSError):
         from warnings import warn
 
         warn(
@@ -1468,11 +1495,14 @@ def _gas_neutral_fraction(sim, sf_kind, gamma=5.0 / 3.0):
         T_SN, A0 = 5.73e7, 573.0
     fneutral_two = _two_phase_neutral(u, nH, XH, T_SN, A0, n_H_th, gamma)
 
-    if 'NeutralHydrogenAbundance' in sim:
+    try:
         fneutral = sim['NeutralHydrogenAbundance'].view(np.ndarray).copy()
-        sfr = sim['sfr'].view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+        try:
+            sfr = sim['sfr'].view(np.ndarray)
+        except (KeyError, OSError):
+            sfr = np.zeros_like(XH)
         fneutral[sfr > 0] = fneutral_two[sfr > 0]
-    else:
+    except (KeyError, OSError):
         from warnings import warn
 
         warn(
@@ -1486,10 +1516,10 @@ def _gas_neutral_fraction(sim, sf_kind, gamma=5.0 / 3.0):
 
 def _metallicity(sim):
     """Total metal mass fraction ``Z`` (excluding H and He) per gas cell."""
-    if 'GFM_Metals' in sim:
+    try:
         metals = sim['GFM_Metals'].view(np.ndarray)
         Z = metals[:, 2:].sum(axis=1).astype(np.float64)
-    else:
+    except (KeyError, OSError):
         from warnings import warn
 
         warn("GFM_Metals not available; assuming solar metallicity Z = 0.0127.", UserWarning)
@@ -1624,15 +1654,16 @@ def _rhosd(sim):
     gas density (documented proxy) when it is not loaded, since no cheap per-cell
     dark-matter+star density is available in a gas-only sub-snapshot.
     """
-    if 'SubfindDMDensity' in sim:
+    try:
         return sim['SubfindDMDensity'].in_units('Msol pc^-3').view(np.ndarray)
-    from warnings import warn
+    except (KeyError, OSError):
+        from warnings import warn
 
-    warn(
-        "SubfindDMDensity not available; approximating rho_sd with the gas density.",
-        UserWarning,
-    )
-    return sim['rho'].in_units('g cm^-3').view(np.ndarray) * _RHO_CGS_TO_MSUN_PC3
+        warn(
+            "SubfindDMDensity not available; approximating rho_sd with the gas density.",
+            UserWarning,
+        )
+        return sim['rho'].in_units('g cm^-3').view(np.ndarray) * _RHO_CGS_TO_MSUN_PC3
 
 
 def _variant_fields(sim):
@@ -1642,7 +1673,10 @@ def _variant_fields(sim):
     rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)  # g cm^-3
     mascgs = sim['mass'].in_units('g').view(np.ndarray)  # g
     masmsun = sim['mass'].in_units('Msol').view(np.ndarray)  # M_sun
-    sfr = sim['sfr'].in_units('Msol yr^-1').view(np.ndarray) if 'sfr' in sim else np.zeros_like(XH)
+    try:
+        sfr = sim['sfr'].in_units('Msol yr^-1').view(np.ndarray)
+    except (KeyError, OSError):
+        sfr = np.zeros_like(XH)
     return XH, u, rho, mascgs, masmsun, sfr
 
 

@@ -5,5 +5,9 @@ src/AnastrisTNG/__pycache__
 src/AnastrisTNG/illustris_python/__pycache__
 src/AnastrisTNG/pytreegrav/__pycache__
 
+# 本地开发/校验用的测试与规划文档不纳入版本库
+tests/
+docs/
+
 
 
