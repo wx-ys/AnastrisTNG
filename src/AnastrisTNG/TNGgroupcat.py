@@ -66,6 +66,10 @@ def simsnap_cover(f1, f2):
         for i in f2.bh:
             f1.bh[i] = f2.bh[i]
 
+    # ---- 覆盖后同步 lazy 索引 ----
+    f1._loaded_index = {fam: np.array(v, dtype=np.int64).copy()
+                        for fam, v in (getattr(f2, '_loaded_index', {}) or {}).items()}
+
 
 def simsnap_merge(f1, f2):
     """
@@ -137,6 +141,12 @@ def simsnap_merge(f1, f2):
                     np.append(f1.bh[i], f2.bh[i], axis=0), f2.bh[i].units
                 )
 
+    # ---- 传播 lazy 索引:拼接 f1、f2 每 family 的原始行号 ----
+    f3._loaded_index = {}
+    for fam in ('dm', 'gas', 'star', 'bh'):
+        a = getattr(f1, '_loaded_index', {}).get(fam, np.array([], dtype=np.int64))
+        b = getattr(f2, '_loaded_index', {}).get(fam, np.array([], dtype=np.int64))
+        f3._loaded_index[fam] = np.append(a, b)
     return f3
 
 

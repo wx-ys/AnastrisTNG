@@ -153,6 +153,27 @@ class Snapshot(SimSnap):
                 x: parameter_all_Description('snapshots', 'bh', x)
                 for x in list(__file_pa['PartType5'].keys())
             }
+            # ---- lazy-load 支持 ----
+            from AnastrisTNG.TNGload import _LazyCtx
+            self._loaded_index = {f: np.array([], dtype=np.int64) for f in ('dm', 'gas', 'star', 'bh')}
+            self._lazy_ctx = _LazyCtx(self)
+            # 每 family -> HDF 字段集合(pynbody 名)。与上面 loadable_parameters 扫描同源,复用 __file_pa。
+            # 注意:一律用字符串 ('dm'/'gas'/'star'/'bh') 作 dict key(与 _loaded_index 一致)。
+            fam_hdf_keys = {}
+            fam_loadable = {}
+            for fam, ptnum in (('gas', 0), ('star', 4), ('dm', 1), ('bh', 5)):
+                group = 'PartType' + str(ptnum)
+                if group not in __file_pa:
+                    continue
+                keys = list(__file_pa[group].keys())
+                fam_hdf_keys[fam] = set(keys)
+                fam_loadable[fam] = [snapshot_pa_name(k) for k in keys]
+            try:
+                self._snap_offsets = getSnapOffsets(BasePath, Snap, 1, 'Group')['snapOffsets']
+            except Exception:
+                # 读不到 offsets 时仍允许构造 Snapshot(仅失去 lazy 能力),不破坏非 lazy 用法。
+                self._snap_offsets = None
+            self._lazy_ctx.set_snapshot_meta(BasePath, Snap, self._snap_offsets, fam_loadable, fam_hdf_keys)
     @staticmethod
     def parameter_describe(table: str, contents: str, parameters: str) -> str:
         '''
@@ -365,7 +386,18 @@ class Snapshot(SimSnap):
             if -1 in subhaloIDover:
                 subhaloIDover.remove(-1)
             if len(subhaloIDover) > 0:
-                fmerge = simsnap_merge(self[self['HaloID'] != haloID], f)
+                keep_mask = self['HaloID'] != haloID
+                f1 = self[keep_mask]
+                # 掩码子视图不继承 _loaded_index;在合并前按掩码重排/重映射已加载粒子的原始行号,
+                # 否则之前加载(非本 halo)粒子的行索引会在 simsnap_merge 中丢失。
+                f1._loaded_index = {}
+                for fam_obj in self.ancestor.families():
+                    fam_str = getattr(fam_obj, 'name', fam_obj)
+                    f1._loaded_index[fam_str] = np.asarray(
+                        self._loaded_index.get(fam_str, np.array([], dtype=np.int64)),
+                        dtype=np.int64,
+                    )[keep_mask[self._get_family_slice(fam_obj)]]
+                fmerge = simsnap_merge(f1, f)
             else:
                 fmerge = simsnap_merge(self, f)
             simsnap_cover(self, fmerge)
@@ -463,6 +495,12 @@ class Snapshot(SimSnap):
             print('The pos and vel of the snapshot particles')
             print('are not in the coordinate system in the original box.')
             print('New particles can not be loaded')
+
+    def loadable_keys(self, fam=None):
+        return self._lazy_ctx.loadable_keys(fam)
+
+    def _load_array(self, name, fam=None):
+        self._lazy_ctx.load_array(name, fam)
 
     def load_particle(
         self, ID: int, groupType: str = 'Subhalo', decorate=True, **kwargs
@@ -604,13 +642,15 @@ class Snapshot(SimSnap):
             )
 
         lenType = subset['lenType']
-        order = kwargs.get('order', self.load_particle_para['particle_field'])        
+        order = kwargs.get('order', self.load_particle_para['particle_field'])
+        from AnastrisTNG.TNGload import _LazySnap
         f = new(
             dm=int(lenType[1]),
             star=int(lenType[4]),
             gas=int(lenType[0]),
             bh=int(lenType[5]),
             order=order,
+            class_=_LazySnap,
         )
 
         for party in self.load_particle_para['particle_field'].split(","):
@@ -729,6 +769,14 @@ class Snapshot(SimSnap):
                         f.bh['HaloID'] = SimArray(
                             -1 * np.ones(len(f.bh)).astype(np.int32)
                         )
+        # ---- lazy:记录每个已加载粒子在原始文件里的行号,并绑定 ctx ----
+        fam_pt = {'dm': 1, 'star': 4, 'gas': 0, 'bh': 5}
+        for fam, ptn in fam_pt.items():
+            if len(f[get_family(fam)]) > 0:
+                off = int(subset['offsetType'][ptn])
+                cnt = int(subset['lenType'][ptn])
+                f._loaded_index[fam] = np.arange(off, off + cnt, dtype=np.int64)
+        f._lazy_ctx = self._lazy_ctx.bind_to(f)
         f.properties = deepcopy(self.properties)
         for i in f.properties:
             if isinstance(f.properties[i], SimArray):

@@ -83,6 +83,31 @@ sub.physical_units() #in physical units
 sub.face_on(alignwith='star',rmax=8) # Align face-on by stellar angular momentum within 8 kpc
 ```
 
+### Lazy-loading of particle data (version > 2.0.0)
+
+For version > 2.0.0, AnastrisTNG supports **lazy-loading** of particle attributes.
+`Snapshot` and `load_particle` read the required fields from the HDF snapshot files on
+demand instead of loading them all up front. The internal code automatically loads the
+needed arrays (e.g. `GFM_Metals`, `NeutralHydrogenAbundance`, `StarFormationRate`,
+`Density`) and computes derived quantities (e.g. `mHI`) — you do not need to configure
+`load_particle_para` in advance.
+
+```python
+snapshot = TNGsimulation.Snapshot(path, snap)
+ID = 8
+sub = snapshot.load_particle(ID)
+sub.physical_units()
+coor_trans = sub.face_on(alignwith='star', rmax=2*sub.re)
+
+# calculate HI mass for each gas cell
+sub.g["mHI"]
+# the internal code will automatically load the needed data from the simulation
+# and calculate the HI mass for each gas cell.
+
+sub.g["mHI"].sum()
+# SimArray(3.40498175e+09, 'Msol')
+```
+
 See [examples](examples) for more:
 - [quick_start](examples/AnastrisTNG_quick_start-cn.ipynb): Quick start
 - [galaxy_face_on](examples/AnastrisTNG_galaxy_face_on-cn.ipynb): Extract, align, and image a galaxy
