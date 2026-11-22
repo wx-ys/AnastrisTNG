@@ -1,4 +1,6 @@
 h5py
+filelock
+python-dotenv
 numba
 numpy
 pynbody>=1.4.0

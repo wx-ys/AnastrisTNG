@@ -22,8 +22,11 @@ from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.Anatools import ang_mom
 from AnastrisTNG.TNGsubhalo import Subhalos, Subhalo
 from AnastrisTNG.TNGhalo import Halos, Halo
-from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty, get_eps_Mdm, get_parttype,simsnap_cover, simsnap_merge
+from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty, get_eps_Mdm, get_parttype,simsnap_cover, simsnap_merge, local_snapshot_header
 from AnastrisTNG.pytreegrav import Accel, Potential, PotentialTarget, AccelTarget
+
+
+_BASE_FIELDS = ("Coordinates", "Velocities", "Masses", "ParticleIDs")
 
 
 class Snapshot(SimSnap):
@@ -45,10 +48,26 @@ class Snapshot(SimSnap):
         An instance representing the halos within the snapshot.
     """
 
+    @classmethod
+    def from_api(cls, run, snap, *, cache_dir=None, local_dir=None, api_key=None,
+                 progress="auto", offline=False):
+        """Open an on-demand Illustris, TNG or TNG-Cluster snapshot with a persistent cache.
+        Set TNG_API_KEY for uncached online reads.
+        local_dir may point to an existing simulation output directory.
+        """
+        from pathlib import Path
+        from .TNGapi import ApiSource
+
+        if cache_dir is None:
+            cache_dir = Path.home() / ".cache" / "AnastrisTNG"
+        source = ApiSource(run, snap, cache_dir, local_dir, api_key, progress, offline)
+        return cls(source.local or str(source.root), snap, _source=source)
+
     def __init__(
         self,
         BasePath: str,
         Snap: int,
+        *, _source=None,
     ):
         """
         Initializes the Snapshot object with the provided base path and snapshot number.
@@ -60,6 +79,7 @@ class Snapshot(SimSnap):
         Snap : int
             The snapshot number corresponding to the desired snapshot in the simulation series.
         """
+        self._source = _source
         SimSnap.__init__(self)
         self._num_particles = 0
         self._filename = "<created>"
@@ -73,7 +93,6 @@ class Snapshot(SimSnap):
         self.__set_Snapshot_property(BasePath, Snap)
         self._filename = self.properties['run']
 
-        self.properties['eps'], self.properties['Mdm'] = get_eps_Mdm(self)
         self.properties['baseunits'] = [
             units.Unit(x) for x in ('kpc', 'km s^-1', 'Msol')
         ]
@@ -116,6 +135,16 @@ class Snapshot(SimSnap):
         self.__phi.sim = self
         self.__acc = SimArray([0.0, 0.0, 0.0], units.km / units.s**2)
         self.__acc.sim = self
+        if _source is not None:
+            from .TNGapi import ApiLazyContext
+            self._loaded_index = {fam: np.empty(0, dtype=np.int64) for fam in _source.fields}
+            self._lazy_ctx = ApiLazyContext(self, _source)
+            self.loadable_parameters = {
+                "snapshots": {fam: {k: parameter_all_Description("snapshots", fam, k) for k in keys}
+                              for fam, keys in _source.fields.items()},
+                "groupcatalogs": _source.catalog_fields,
+            }
+            return
         with h5py.File(snapPath(BasePath, Snap), 'r') as __file_pa:
             __halo_pa = list(loadSingle(BasePath, Snap, haloID=1).keys())
             __subhalo_pa = list(loadSingle(BasePath, Snap, subhaloID=1).keys())
@@ -266,11 +295,13 @@ class Snapshot(SimSnap):
             subID,
             fields,
             physical_units,
+            _source=self._source,
         )
     def halo_evolution(
         self,
         haloID,
         physical_units: bool = True,
+        *, fields=None,
     ):
 
         return halo_evolution(
@@ -278,6 +309,7 @@ class Snapshot(SimSnap):
             self.properties['Snapshot'],
             haloID,
             physical_units,
+            fields=fields, _source=self._source,
         )
 
     def merger_history(
@@ -296,15 +328,15 @@ class Snapshot(SimSnap):
             minMassRatio,
             massPartType,
             physical_units,
+            _source=self._source,
         )
 
     def halos_GC(self, fields: List[str]):
         if isinstance(fields, str):
             fields = list([fields])
         if isinstance(fields, list):
-            halosGC = halosproperty(
-                self.properties['filedir'], self.properties['Snapshot'], fields
-            )
+            halosGC = (self._source.catalog_columns("Halo", fields) if self._source is not None
+                       else halosproperty(self.properties['filedir'], self.snapshot, fields))
             if len(fields) == 1:
                 try:
                     hGC = SimArray(halosGC, groupcat_units(fields[0]))
@@ -327,9 +359,8 @@ class Snapshot(SimSnap):
         if isinstance(fields, str):
             fields = list([fields])
         if isinstance(fields, list):
-            subhaloGC = subhalosproperty(
-                self.properties['filedir'], self.properties['Snapshot'], fields
-            )
+            subhaloGC = (self._source.catalog_columns("Subhalo", fields) if self._source is not None
+                         else subhalosproperty(self.properties['filedir'], self.snapshot, fields))
             if len(fields) == 1:
                 try:
                     subGC = SimArray(subhaloGC, groupcat_units(fields[0]))
@@ -365,8 +396,9 @@ class Snapshot(SimSnap):
         """
         Load a specific halo's particles and group catalog (GC) data into the snapshot.
         """
-        if not (isinstance(haloID, int) or np.issubdtype(haloID, np.integer)):
+        if not isinstance(haloID, (int, np.integer)):
             raise TypeError("haloID should be int")
+        haloID = int(haloID)
         if haloID in self.__PT_loaded['Halo']:
             print(haloID, ' was already loaded into this Snapshot')
             return
@@ -377,7 +409,7 @@ class Snapshot(SimSnap):
             self.load_particle_para['particle_field'] = get_parttype(
                 self.load_particle_para['particle_field']
             )
-            f = self.load_particle(ID=haloID, groupType='Halo', decorate=False)
+            f = self.load_particle(ID=haloID, groupType='Halo', decorate=False, lazy=False)
             # del self[self['HaloID']==haloID] del the loaded subhalo in this halo or overwrite it ?
             if 'HaloID' in self:
                 subhaloIDover = set(self[self['HaloID'] == haloID]['SubhaloID'])
@@ -386,6 +418,8 @@ class Snapshot(SimSnap):
             if -1 in subhaloIDover:
                 subhaloIDover.remove(-1)
             if len(subhaloIDover) > 0:
+                for sub_id in subhaloIDover:
+                    self._match_subhalo(f, sub_id)
                 keep_mask = self['HaloID'] != haloID
                 f1 = self[keep_mask]
                 # 掩码子视图不继承 _loaded_index;在合并前按掩码重排/重映射已加载粒子的原始行号,
@@ -401,8 +435,6 @@ class Snapshot(SimSnap):
             else:
                 fmerge = simsnap_merge(self, f)
             simsnap_cover(self, fmerge)
-            for i in subhaloIDover:
-                self.match_subhalo(i)
             ind = np.empty((len(self),), dtype='int8')
             for i, f in enumerate(self.ancestor.families()):
                 ind[self._get_family_slice(f)] = i
@@ -430,36 +462,34 @@ class Snapshot(SimSnap):
         Match particles to a specific subhalo based on the subhalo's ID.
         """
 
-        parID = np.array([])
-        for ty in ['star', 'gas', 'dm', 'bh']:
-            thiID = loadSubhalo(
-                self.properties['filedir'],
-                self.snapshot,
-                subhaloID,
-                ty,
-                fields=['ParticleIDs'],
-            )
-            if isinstance(thiID, dict):
-                if thiID['count'] > 0:
-                    thiID = thiID['ParticleIDs']
-                else:
-                    continue
-            parID = np.append(parID, thiID)
-        parID.astype(np.uint64)
-        self['SubhaloID'][np.isin(self['iord'], parID)] = subhaloID
-        # self.subhalos.update()
+        self._match_subhalo(self, subhaloID)
+
+    def _match_subhalo(self, target, subhaloID):
+        families = [fam.name for fam in target.families()]
+        if self._source is not None:
+            data = self._source.particles("Subhalo", subhaloID,
+                                          {fam: ["ParticleIDs"] for fam in families})
+        else:
+            data = {fam: loadSubhalo(self.properties['filedir'], self.snapshot,
+                                     subhaloID, fam, fields=['ParticleIDs']) for fam in families}
+        for fam, fields in data.items():
+            if "ParticleIDs" in fields:
+                particles = target[get_family(fam)]
+                mask = np.isin(particles["iord"], fields["ParticleIDs"])
+                particles["SubhaloID"][mask] = subhaloID
 
     def load_subhalo(self, subhaloID: int):
         """
         Load particles and properties associated with a specific subhalo into the snapshot.
         """
 
-        if not (isinstance(subhaloID, int) or np.issubdtype(subhaloID, np.integer)):
+        if not isinstance(subhaloID, (int, np.integer)):
             raise TypeError("subhaloID should be int")
+        subhaloID = int(subhaloID)
         if subhaloID in self.__PT_loaded['Subhalo']:
             print(subhaloID, ' was already loaded into this Snapshot')
             print('So here update subhalos about this subhalo')
-            if subhaloID in self['SubhaloID']:
+            if not len(self) or subhaloID in self['SubhaloID']:
                 self.subhalos.update()
             else:
                 print('No particle has this SubhaloID.')
@@ -473,7 +503,7 @@ class Snapshot(SimSnap):
             self.load_particle_para['particle_field'] = get_parttype(
                 self.load_particle_para['particle_field']
             )
-            f = self.load_particle(ID=subhaloID, groupType='Subhalo', decorate=False)
+            f = self.load_particle(ID=subhaloID, groupType='Subhalo', decorate=False, lazy=False)
 
             fmerge = simsnap_merge(self, f)
             simsnap_cover(self, fmerge)
@@ -484,9 +514,10 @@ class Snapshot(SimSnap):
             self._family_index_cached = ind
 
             self.subhalos[subhaloID].load_GC()
-            self['HaloID'][self['SubhaloID'] == subhaloID] = self.subhalos[
-                subhaloID
-            ].GC['SubhaloGrNr']
+            if len(self):
+                self['HaloID'][self['SubhaloID'] == subhaloID] = self.subhalos[
+                    subhaloID
+                ].GC['SubhaloGrNr']
             self.subhalos.update()
             self.halos.update()
             self.__PT_loaded['Subhalo'].add(subhaloID)
@@ -502,16 +533,76 @@ class Snapshot(SimSnap):
     def _load_array(self, name, fam=None):
         self._lazy_ctx.load_array(name, fam)
 
+    def read_particle_field(self, ID, family, field, groupType="Subhalo"):
+        """Read an independent column in snapshot units, e.g. (12, "star", "mass").
+
+        Uses the same file order and disk cache as a standalone load_particle
+        object. Requests only this field on a cache miss.
+        """
+        from .TNGapi import CATALOG, PART_TYPE, ZOOM_PART_TYPE
+
+        if groupType not in (*CATALOG, "Zoom") or not isinstance(ID, (int, np.integer)) or ID < 0:
+            raise ValueError("Expected Halo, Subhalo or Zoom and a non-negative integer ID")
+        if groupType == "Zoom" and self.properties["run"] != "TNG-Cluster":
+            raise ValueError("Zoom selections require TNG-Cluster")
+        families = ZOOM_PART_TYPE if groupType == "Zoom" else PART_TYPE
+        if family not in families:
+            raise ValueError(f"Expected one of {', '.join(families)}")
+        names = self.loadable_parameters["snapshots"].get(family, {})
+        dm_mass = family == "dm" and field in ("mass", "Masses")
+        key = "Masses" if dm_mass else next((k for k in names if field in (k, snapshot_pa_name(k))), None)
+        if family in ("dmlowres", "tracer"):
+            key = {"mass": "Masses", "vel": "Velocities", "pos": "Coordinates",
+                   "iord": "TracerID" if family == "tracer" else "ParticleIDs"}.get(field, field)
+        if key is None:
+            raise KeyError(f"Unknown snapshot field {family}.{field}")
+        if self._source is None and groupType == "Zoom":
+            base = self.properties["filedir"]
+            if dm_mass:
+                offsets = getSnapOffsets(base, self.snapshot, ID, "Group")
+                original = loadSingle(base, self.snapshot, haloID=ID)["GroupOrigHaloID"]
+                i = np.flatnonzero(offsets["HaloIDs"] == original).item()
+                count = int(offsets["GroupsTotalLengthByType"][i, 1] + offsets["OuterFuzzTotalLengthByType"][i, 1])
+            else:
+                data = loadOriginalZoom(base, self.snapshot, ID, families[family], [key])
+                count = int(data["count"])
+                if count:
+                    values = data[key]
+        elif self._source is None:
+            subset = getSnapOffsets(self.properties["filedir"], self.snapshot, ID, CATALOG[groupType])
+            count = int(subset["lenType"][families[family]])
+        else:
+            counts = self._source.particle_counts(groupType, ID)
+            count = int(counts[families[family]])
+        if not count:
+            raise ValueError(f"{groupType} {ID} has no {family} particles")
+        unit = units.NoUnit() if family == "tracer" else snapshot_units(key)
+        if dm_mass:
+            values = np.full(count, self.properties["Mdm"].in_units(unit))
+        elif self._source is None and groupType != "Zoom":
+            values = loadSubset(self.properties["filedir"], self.snapshot, family, key, subset=subset, sq=True)
+        elif self._source is not None:
+            values = self._source.particles(groupType, ID, {family: [key]}, counts=counts)[family][key]
+        if family == "tracer" and key == "FluidQuantities":
+            return values  # The five columns have different physical units.
+        result = SimArray(values, unit)
+        result.sim = self
+        return result
+
     def load_particle(
-        self, ID: int, groupType: str = 'Subhalo', decorate=True, **kwargs
+        self, ID: int, groupType: str = 'Subhalo', decorate=True, *, lazy=True, **kwargs
     ) -> SimSnap:
         '''
         ID: int, halo or subhalo id
         groupType: str, 'Halo' or 'Subhalo', 'Zoom' for TNG-Cluster
+        Standalone API objects load particle fields on access. Use lazy=False
+        to prefetch Basefields and the configured family fields together.
 
         '''
         
-        if groupType == 'Zoom':
+        if self._source is not None and groupType not in ("Halo", "Subhalo", "Zoom"):
+            raise ValueError("Expected Halo, Subhalo or Zoom")
+        if groupType == 'Zoom' and self._source is None:
             subset = getSnapOffsets(self.properties['filedir'], self.snapshot, ID, 'Group')
 
             # identify original halo ID and corresponding index
@@ -632,161 +723,77 @@ class Snapshot(SimSnap):
             
             
             
-        if groupType == 'Halo':
-            subset = getSnapOffsets(
-                self.properties['filedir'], self.snapshot, ID, 'Group'
-            )
+        families = self.load_particle_para['particle_field'].split(',')
+        order = kwargs.get('order', ','.join(families))
+        deferred = self._source is not None and (lazy or groupType == "Zoom")
+        if deferred:
+            from .TNGapi import ApiObjectContext
+            f = ApiObjectContext.new_snapshot(self._source, groupType, ID, families, order)
         else:
-            subset = getSnapOffsets(
-                self.properties['filedir'], self.snapshot, ID, 'Subhalo'
-            )
-
-        lenType = subset['lenType']
-        order = kwargs.get('order', self.load_particle_para['particle_field'])
-        from AnastrisTNG.TNGload import _LazySnap
-        f = new(
-            dm=int(lenType[1]),
-            star=int(lenType[4]),
-            gas=int(lenType[0]),
-            bh=int(lenType[5]),
-            order=order,
-            class_=_LazySnap,
-        )
-
-        for party in self.load_particle_para['particle_field'].split(","):
-            if len(f[get_family(party)]) > 0:
-                if len(self.load_particle_para[party + '_fields']) > 0:
-                    self.load_particle_para[party + '_fields'] = list(
-                        set(
-                            self.load_particle_para[party + '_fields']
-                            + self.load_particle_para['Basefields']
-                        )
-                    )
-                else:
-                    self.load_particle_para[party + '_fields'] = list.copy(
-                        self.load_particle_para['Basefields']
-                    )
-
-                if party == 'dm':
-                    if 'Masses' in self.load_particle_para[party + '_fields']:
-                        self.load_particle_para[party + '_fields'].remove('Masses')
-                    loaddata = loadSubset(
-                        self.properties['filedir'],
-                        self.snapshot,
-                        party,
-                        self.load_particle_para[party + '_fields'],
-                        subset=subset,
-                    )
-                    for i in self.load_particle_para[party + '_fields']:
-                        f.dm[snapshot_pa_name(i)] = SimArray(
-                            loaddata[i], snapshot_units(i)
-                        )
-                    if 'Masses' in self.load_particle_para['Basefields']:
-                        f.dm['mass'] = SimArray(self.properties['Mdm'].in_units(
-                            snapshot_units('Masses')
-                        ) * np.ones(len(f.dm)), snapshot_units('Masses')) 
-                        self.load_particle_para[party + '_fields'].append('Masses')
-                    f.dm[groupType + 'ID'] = SimArray(
-                        ID * np.ones(len(f.dm)).astype(np.int32)
-                    )
-                    if groupType == 'Halo':
-                        f.dm['SubhaloID'] = SimArray(
-                            -1 * np.ones(len(f.dm)).astype(np.int32)
-                        )
-                    else:
-                        f.dm['HaloID'] = SimArray(
-                            -1 * np.ones(len(f.dm)).astype(np.int32)
-                        )
-
-                if party == 'star':
-                    loaddata = loadSubset(
-                        self.properties['filedir'],
-                        self.snapshot,
-                        party,
-                        self.load_particle_para[party + '_fields'],
-                        subset=subset,
-                    )
-                    for i in self.load_particle_para[party + '_fields']:
-                        f.s[snapshot_pa_name(i)] = SimArray(
-                            loaddata[i], snapshot_units(i)
-                        )
-                    f.s[groupType + 'ID'] = SimArray(
-                        ID * np.ones(len(f.s)).astype(np.int32)
-                    )
-                    if groupType == 'Halo':
-                        f.s['SubhaloID'] = SimArray(
-                            -1 * np.ones(len(f.s)).astype(np.int32)
-                        )
-                    else:
-                        f.s['HaloID'] = SimArray(
-                            -1 * np.ones(len(f.s)).astype(np.int32)
-                        )
-
-                if party == 'gas':
-                    loaddata = loadSubset(
-                        self.properties['filedir'],
-                        self.snapshot,
-                        party,
-                        self.load_particle_para[party + '_fields'],
-                        subset=subset,
-                    )
-                    for i in self.load_particle_para[party + '_fields']:
-                        f.g[snapshot_pa_name(i)] = SimArray(
-                            loaddata[i], snapshot_units(i)
-                        )
-                    f.g[groupType + 'ID'] = SimArray(
-                        ID * np.ones(len(f.g)).astype(np.int32)
-                    )
-                    if groupType == 'Halo':
-                        f.g['SubhaloID'] = SimArray(
-                            -1 * np.ones(len(f.g)).astype(np.int32)
-                        )
-                    else:
-                        f.g['HaloID'] = SimArray(
-                            -1 * np.ones(len(f.g)).astype(np.int32)
-                        )
-
-                if party == 'bh':
-                    loaddata = loadSubset(
-                        self.properties['filedir'],
-                        self.snapshot,
-                        party,
-                        self.load_particle_para[party + '_fields'],
-                        subset=subset,
-                    )
-                    for i in self.load_particle_para[party + '_fields']:
-                        f.bh[snapshot_pa_name(i)] = SimArray(
-                            loaddata[i], snapshot_units(i)
-                        )
-                    f.bh[groupType + 'ID'] = SimArray(
-                        ID * np.ones(len(f.bh)).astype(np.int32)
-                    )
-                    if groupType == 'Halo':
-                        f.bh['SubhaloID'] = SimArray(
-                            -1 * np.ones(len(f.bh)).astype(np.int32)
-                        )
-                    else:
-                        f.bh['HaloID'] = SimArray(
-                            -1 * np.ones(len(f.bh)).astype(np.int32)
-                        )
-        # ---- lazy:记录每个已加载粒子在原始文件里的行号,并绑定 ctx ----
-        fam_pt = {'dm': 1, 'star': 4, 'gas': 0, 'bh': 5}
-        for fam, ptn in fam_pt.items():
-            if len(f[get_family(fam)]) > 0:
-                off = int(subset['offsetType'][ptn])
-                cnt = int(subset['lenType'][ptn])
-                f._loaded_index[fam] = np.arange(off, off + cnt, dtype=np.int64)
-        f._lazy_ctx = self._lazy_ctx.bind_to(f)
+            f = self._read_particle_fields(ID, groupType, families, order)
+        f._source = self._source
         f.properties = deepcopy(self.properties)
-        for i in f.properties:
-            if isinstance(f.properties[i], SimArray):
-                f.properties[i].sim = f
+        for value in f.properties.values():
+            if isinstance(value, SimArray):
+                value.sim = f
         f._filename = self.filename + '_' + groupType + '_' + str(ID)
-        if decorate:
-            if groupType == 'Halo':
-                return Halo(f)
+        if deferred:
+            base = self.load_particle_para['Basefields']
+            explicit = [] if lazy and tuple(base) == _BASE_FIELDS else list(base)
+            prefetch = {fam.name: list(dict.fromkeys(explicit + self.load_particle_para[fam.name + '_fields']))
+                        for fam in f.families()}
+            f._lazy_ctx.read_fields({fam: keys for fam, keys in prefetch.items() if keys})
+        if decorate and groupType in ('Halo', 'Subhalo', 'Zoom'):
             if groupType == 'Subhalo':
-                return Subhalo(f)
+                return Subhalo(f, defer_catalog=deferred)
+            return Halo(f, defer_catalog=groupType == 'Zoom')
+        return f
+
+    def _read_particle_fields(self, ID, groupType, families, order):
+        from .TNGload import _LazySnap
+        fields = {fam: list(dict.fromkeys(self.load_particle_para['Basefields'] +
+                                          self.load_particle_para[fam + '_fields']))
+                  for fam in families}
+        dm_mass = 'Masses' in fields.get('dm', [])
+        if dm_mass:
+            fields['dm'].remove('Masses')
+        pt = {'dm': 1, 'star': 4, 'gas': 0, 'bh': 5}
+        if self._source is None:
+            subset = getSnapOffsets(self.properties['filedir'], self.snapshot, ID,
+                                    'Group' if groupType == 'Halo' else 'Subhalo')
+            counts = {fam: int(subset['lenType'][pt[fam]]) for fam in families}
+            data = {fam: loadSubset(self.properties['filedir'], self.snapshot, fam,
+                                    names, subset=subset) for fam, names in fields.items()
+                    if counts[fam] and names}
+        else:
+            # Eager/merge readers track membership by ID, including for a
+            # custom Basefields list. The shared cache supplies existing IDs.
+            data = self._source.particles(groupType, ID, {fam: names + ["ParticleIDs"]
+                                                          for fam, names in fields.items()})
+            counts = {fam: len(data[fam]['ParticleIDs']) if fam in data else 0 for fam in families}
+
+        f = new(order=order, class_=_LazySnap,
+                **{fam: counts.get(fam, 0) for fam in pt})
+        other = 'Subhalo' if groupType == 'Halo' else 'Halo'
+        for fam, count in counts.items():
+            if not count:
+                continue
+            particles = f[get_family(fam)]
+            for key, array in data.get(fam, {}).items():
+                if key != 'count':
+                    particles[snapshot_pa_name(key)] = SimArray(array, snapshot_units(key))
+            if fam == 'dm' and dm_mass:
+                unit = snapshot_units('Masses')
+                particles['mass'] = SimArray(np.full(count, self.properties['Mdm'].in_units(unit)), unit)
+            particles[groupType + 'ID'] = np.full(count, ID, dtype=np.int32)
+            particles[other + 'ID'] = np.full(count, -1, dtype=np.int32)
+            if self._source is None:
+                offset = int(subset['offsetType'][pt[fam]])
+                f._loaded_index[fam] = np.arange(offset, offset + count, dtype=np.int64)
+            else:
+                origin = int(ID) if groupType == 'Halo' else -1 - int(ID)
+                f._loaded_index[fam] = np.full(count, origin, dtype=np.int64)
+        f._lazy_ctx = self._lazy_ctx.bind_to(f)
         return f
 
     def target_acceleration(self, targetpos: np.ndarray) -> SimArray:
@@ -883,11 +890,15 @@ class Snapshot(SimSnap):
         Init properties (Simdict) from Base Path and Snap.
         """
 
-        SnapshotHeader = loadHeader(BasePath, Snap)
+        SnapshotHeader = self._source.header() if self._source else local_snapshot_header(BasePath, Snap)
         self.properties = SimDict()
         self.properties['filedir'] = BasePath
-        self.properties['filepath'] = BasePath
+        if self._source is None:
+            self.properties['filepath'] = BasePath
+        else:
+            self.properties['run'] = self._source.run
         self.properties['read_Snap_properties'] = SnapshotHeader
+        self.properties['eps'], self.properties['Mdm'] = get_eps_Mdm(self, SnapshotHeader)
         for i in self.properties:
             if 'sim' in dir(self.properties[i]):
                 self.properties[i].sim = self
@@ -896,7 +907,7 @@ class Snapshot(SimSnap):
     def __set_load_particle(self):
         pa = {}
         pa['particle_field'] = 'dm,star,gas,bh'
-        pa['Basefields'] = ['Coordinates', 'Velocities', 'Masses', 'ParticleIDs']
+        pa['Basefields'] = list(_BASE_FIELDS)
         pa['star_fields'] = []
         pa['gas_fields'] = []
         pa['dm_fields'] = []
