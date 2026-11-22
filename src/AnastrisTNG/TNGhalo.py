@@ -30,7 +30,7 @@ class Halo(Basehalo):
 
     """
 
-    def __init__(self, simarray):
+    def __init__(self, simarray, *, defer_catalog=False):
         """
         Initializes the Halo object.
 
@@ -42,27 +42,36 @@ class Halo(Basehalo):
         Basehalo.__init__(self, simarray)
         self._descriptor = 'Halo' + '_' + simarray.filename.split('_')[-1]
         self.GC['HaloID'] = int(simarray.filename.split('_')[-1])
-        if len(simarray) > 0:
+        if defer_catalog:
+            self._gc_pending = True
+        elif len(simarray) > 0:
             self.load_GC()
 
     def load_GC(self):
         """
         Loads the group catalog data for this halo and updates its properties.
         """
-        proper = haloproperties(
-            self.GC['filedir'], self.GC['Snapshot'], self.GC['HaloID']
-        )
+        source = getattr(self.ancestor, '_source', None)
+        if source is not None:
+            proper = source.catalog_arrays("Halo", self._GC["HaloID"])
+        else:
+            proper = haloproperties(
+                self.GC['filedir'], self.GC['Snapshot'], self.GC['HaloID']
+            )
+        self._gc_pending = False
         self.GC.update(proper)
         for i in self.GC:
             if isinstance(self.GC[i], SimArray):
                 self.GC[i].sim = self.ancestor
+        if self._gc_physical:
+            self.GC_physical_units()
 
     def __repr__(self):
         return (
             "<Halo \""
             + self.ancestor.filename
             + "\" HaloID="
-            + str(self.GC['HaloID'])
+            + str(self._GC['HaloID'])
             + ">"
         )
 

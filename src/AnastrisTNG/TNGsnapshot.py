@@ -14,7 +14,7 @@ from pynbody.array import SimArray
 from pynbody.snapshot import SubSnap
 from pynbody.analysis.angmom import calc_faceon_matrix
         
-from AnastrisTNG.TNGunits import illustrisTNGruns, NotneedtransGCPa
+from AnastrisTNG.TNGunits import RUN_DEFAULTS, illustrisTNGruns, NotneedtransGCPa
 from AnastrisTNG.pytreegrav import Potential, Accel
 from AnastrisTNG.Anatools import ang_mom, fit_krotmax, MoI_shape
 
@@ -53,8 +53,21 @@ class Basehalo(SubSnap):
             An object that contains halo particles.
         """
         SubSnap.__init__(self, simarray, slice(len(simarray)))
-        self.GC = SimDict()
-        self.GC.update(simarray.properties)
+        self._gc_pending = False
+        self._gc_physical = False
+        self._GC = SimDict()
+        self._GC.update(simarray.properties)
+
+    @property
+    def GC(self):
+        if self._gc_pending:
+            self.load_GC()
+        return self._GC
+
+    @GC.setter
+    def GC(self, value):
+        self._GC = value
+        self._gc_pending = False
 
 
     def physical_units(self, persistent: bool = False):
@@ -102,10 +115,7 @@ class Basehalo(SubSnap):
                         if new_unit != v.units:
                             self.properties[k].convert_units(new_unit)
             self.GC_physical_units()
-            if persistent:
-                self._autoconvert = dims
-            else:
-                self._autoconvert = None
+            self.ancestor._autoconvert = dims if persistent else None
 
     def GC_physical_units(self, distance='kpc', velocity='km s^-1', mass='Msol'):
         """
@@ -124,10 +134,12 @@ class Basehalo(SubSnap):
         """
         dims = self.ancestor.properties['baseunits'] + [units.a, units.h]
         urc = len(dims) - 2
-        for k in list(self.GC):
+        if self._gc_pending:
+            self._gc_physical = True
+        for k in list(self._GC):
             if k in NotneedtransGCPa:
                 continue
-            v = self.GC[k]
+            v = self._GC[k]
             if isinstance(v, units.UnitBase):
                 try:
                     new_unit = v.dimensional_project(dims)
@@ -137,7 +149,7 @@ class Basehalo(SubSnap):
                     lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:urc])]
                 )
                 new_unit *= v.ratio(new_unit, **self.conversion_context())
-                self.GC[k] = new_unit
+                self._GC[k] = new_unit
             if isinstance(v, SimArray):
                 if (v.units is not None) and (v.units is not units.no_unit):
                     try:
@@ -148,7 +160,7 @@ class Basehalo(SubSnap):
                         lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
                     )
                     if new_unit != v.units:
-                        self.GC[k].convert_units(new_unit)
+                        self._GC[k].convert_units(new_unit)
 
     def vel_center(self, mode='ssc', pos=None, r_cal='2 kpc'):
         '''
@@ -1825,35 +1837,36 @@ def read_Snap_properties(f, SnapshotHeader):
 
     Cosmological Model (Illustris runs):
     -------------------------------
-    - Standard ΛCDM model based on Planck 2013 results:
+    - ΛCDM parameters consistent with WMAP9 (Vogelsberger et al. 2014):
       - omegaL0 (Dark Energy density parameter): 0.7274
       - omegaM0 (Matter density parameter): 0.2726
       - omegaB0 (Baryon density parameter): 0.0456
       - sigma8 (Amplitude of matter density fluctuations): 0.809
       - ns (Spectral index of primordial fluctuations): 0.963
       - h (Hubble parameter): 0.704
-    # from https://arxiv.org/abs/1405.1418
+    https://doi.org/10.1093/mnras/stu1536
     """
 
     f['a'] = SnapshotHeader['Time']                 # Scale factor (time)
     f['z'] = (1 / SnapshotHeader['Time']) - 1       # Redshift
     if "TNG" in f['run']:
-        f['h'] = SnapshotHeader['HubbleParam']          # Hubble parameter.
-        f['omegaM0'] = SnapshotHeader['Omega0']         # Matter density parameter.
-        f['omegaL0'] = SnapshotHeader['OmegaLambda']    # Dark energy density parameter.
-        f['omegaB0'] = 0.0486                           # Baryon density parameter (fixed value).
-        f['sigma8'] = 0.8159                            # Amplitude of matter density fluctuations (fixed value).
-        f['ns'] = 0.9667                                # Spectral index (fixed value).
+        baryon, sigma8, ns = 0.0486, 0.8159, 0.9667
+        f['h'] = SnapshotHeader['HubbleParam']
+        f['omegaM0'] = SnapshotHeader['Omega0']
+        f['omegaL0'] = SnapshotHeader['OmegaLambda']
     elif "Illustris" in f['run']:
-        f['h'] = 0.704
-        f['omegaM0'] = 0.2726
-        f['omegaL0'] = 0.7274
-        f['omegaB0'] = 0.0456                           # Baryon density parameter (fixed value).
-        f['sigma8'] = 0.809                          # Amplitude of matter density fluctuations (fixed value).
-        f['ns'] = 0.963                               # Spectral index (fixed value).
+        baryon, sigma8, ns = 0.0456, 0.809, 0.963
+        # Original Illustris group catalogs can omit cosmology.
+        f['h'] = SnapshotHeader.get('HubbleParam', 0.704)
+        f['omegaM0'] = SnapshotHeader.get('Omega0', 0.2726)
+        f['omegaL0'] = SnapshotHeader.get('OmegaLambda', 0.7274)
     else:
         raise ValueError("Unknown run type in 'run' property")
-    f['boxsize'] = SnapshotHeader['BoxSize'] * units.kpc * units.a / units.h                        # Size of the simulation box (in kpc)
+    f['omegaB0'] = SnapshotHeader.get('OmegaBaryon', baryon)
+    f['sigma8'] = SnapshotHeader.get('Sigma8', sigma8)
+    f['ns'] = SnapshotHeader.get('PrimordialIndex', ns)
+    box_size = SnapshotHeader['BoxSize'] if 'BoxSize' in SnapshotHeader else RUN_DEFAULTS[f['run']].box_size
+    f['boxsize'] = box_size * units.kpc * units.a / units.h
     f['Halos_total'] = SnapshotHeader['Ngroups_Total']          # Total number of halos in the snapshot.
     f['Subhalos_total'] = SnapshotHeader['Nsubgroups_Total']    # Total number of subhalos in the snapshot.
 

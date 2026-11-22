@@ -1,132 +1,140 @@
-## Introduction
-AnastrisTNG is a python package for processing and analyzing the cosmological simulation [IllustrisTNG](https://www.tng-project.org/).
-It supports Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**.
- 
+# AnastrisTNG
 
->[!NOTE]
->analysis utilities are being migrated and updated in the [pynbody-extras](https://github.com/wx-ys/pynbody-extras) project: https://github.com/wx-ys/pynbody-extras.
->Usage example: `examples/AnastrisTNG_pynext-cn.ipynb`
->
->spatially-resolved star formation history tools in the [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose) project: https://github.com/GalaxySimAnalytics/GalaxyPose
->Usage example: `examples/AnastrisTNG_galpos_SFH-cn.ipynb`, install GalaxyPose with `pip install "galpos"`.
+English · [简体中文](README_CN.md)
+
+AnastrisTNG loads Illustris and IllustrisTNG particles, group catalogs and SubLink merger trees into pynbody for galaxy and halo analysis.
+
+**Local files** — Open a run’s downloaded snapshot files and group catalogs with `Snapshot(output_dir, snap_number)`. For merger histories, also download the SubLink trees.
+
+**Remote API** — Use `Snapshot.from_api(run, snap_number)` to read particle data, catalog fields and merger histories directly from the TNG servers. The reader downloads data on demand and caches it locally. Sign in to the TNG website to get your key from your [TNG account profile](https://www.tng-project.org/users/profile/).
+
+Once the snapshot is open, both sources use the same analysis calls.
+
+| Task | Entry point |
+| --- | --- |
+| Read particles and the catalog row for one halo or subhalo | `snap.load_particle(...)`, `sub.GC` |
+| Load a subhalo and its host into one snapshot | `snap.load_subhalo(...)`, `snap.load_halo(...)` |
+| Read columns from the full group catalog | `snap.halos_GC(...)`, `snap.subhalos_GC(...)` |
+| Find mergers along a galaxy’s main branch | `snap.merger_history(...)` |
+| Trace galaxy or halo evolution | `snap.galaxy_evolution(...)`, `snap.halo_evolution(...)` |
+| Select a complete TNG-Cluster zoom | `snap.load_particle(..., groupType="Zoom")` |
+
+Supported runs include Illustris-1 through Illustris-3, TNG50-1 through TNG50-4, TNG100-1 through TNG100-3, TNG300-1 through TNG300-3 and TNG-Cluster. The redshift-zero snapshot is **135 for original Illustris** and **99 for TNG**.
 
 ## Installation
 
-Python version >= 3.8:
-```
+Install from the repository with Python 3.8 or later.
+
+```shell
 git clone https://github.com/wx-ys/AnastrisTNG.git
-```
-
-Install this in editable mode.
-```
 cd AnastrisTNG
-pip install -e .
+python -m pip install -e .
 ```
 
-Recommended dependencies (these are installed automatically when possible):
-- `numpy`, `scipy`, `h5py`, `tqdm`, `six`, `numba`
-- `pynbody >= 1.4.0`
+## Open a snapshot
 
+**Local files.** Pass the run’s `output` directory containing `snapdir_099/` and `groups_099/`. For the TNG public file layout, place the matching offsets file in `../postprocessing/offsets/`.
 
->[!NOTE]
->for Python 3.8 users:
->Direct `pip install pynbody` may fail on some systems. If you encounter issues, run:
->
-> ```bash
-> pip install --upgrade pip setuptools wheel
-> pip install "numpy<1.26" "cython<3.0"
-> pip install --no-build-isolation pynbody
-> ```
-> Then install AnastrisTNG:
-> ```bash
-> pip install -e .
-> ```
-
-
-## Features
-
-
-* __Supports  Illustris, TNG50, TNG100, TNG300, and **TNG-Cluster (recently released)**, with units handled.__
-
-* __Rapid exploration of galaxy and halo evolution, including merger trees and histories.__
-
-* __Coordinate-consistent analysis of interacting galaxies.__
-
-* __GroupCatalog analysis and particle tracing (including gas).__
-
-* __Radial and vertical profile tools for 3D properties and 2D projections.__
-<center>
-      <img src="./images/radial_profile.png"  height = "300">
-      <img src="./images/vertical_profile.png" height = "300">
-</center>
-
-
-* __Fast (tens of seconds) inspection of spatially-resolved star formation histories (SFH). (not public; robust version at [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose)). If interested, contact lushuai@stu.xmu.edu.cn.__
-![image](./images/TNG50_SFH_Subhalo_424289.png)
-
-## Usage
-
-Basic example:
 ```python
-from AnastrisTNG import TNGsimulation 
-BasePath = 'filepath'  # Path to simulation data
-snap=99                # Snapshot number
+from AnastrisTNG import Snapshot
 
-Snapshot=TNGsimulation.Snapshot(BasePath,snap) # use snapshot 99
-
-Snapshot.load_halo(400)     # load halo with ID 400
-Snapshot.load_subhalo(8)    # load subhalo with ID 8
-
-# load a single subhalo/galaxy (decorate converts to helper object)
-sub = Snapshot.load_particle(ID=10, groupType='Subhalo', decorate=True)
-sub.physical_units() #in physical units
-sub.face_on(alignwith='star',rmax=8) # Align face-on by stellar angular momentum within 8 kpc
+snap = Snapshot("/data/TNG50-4/output", 99)
 ```
 
-### Lazy-loading of particle data (version > 2.0.0)
+**Remote API.** Set the environment variable `TNG_API_KEY`, or put this line in a `.env` file in the working directory of your Python session or notebook kernel.
 
-For version > 2.0.0, AnastrisTNG supports **lazy-loading** of particle attributes.
-`Snapshot` and `load_particle` read the required fields from the HDF snapshot files on
-demand instead of loading them all up front. The internal code automatically loads the
-needed arrays (e.g. `GFM_Metals`, `NeutralHydrogenAbundance`, `StarFormationRate`,
-`Density`) and computes derived quantities (e.g. `mHI`) — you do not need to configure
-`load_particle_para` in advance.
+```dotenv
+TNG_API_KEY=your_key_here
+```
 
 ```python
-snapshot = TNGsimulation.Snapshot(path, snap)
-ID = 8
-sub = snapshot.load_particle(ID)
+from AnastrisTNG import Snapshot
+
+snap = Snapshot.from_api("TNG50-4", 99)
+```
+
+For original Illustris at redshift zero, use `Snapshot.from_api("Illustris-3", 135)`. If you already have some files, pass `local_dir="/data/TNG50-4/output"` to use them and fetch missing data from the API.
+
+## Examples
+
+### Read a subhalo’s gas density
+
+```python
+sub = snap.load_particle(22842)
+rho = sub.gas["rho"]
 sub.physical_units()
-coor_trans = sub.face_on(alignwith='star', rmax=2*sub.re)
-
-# calculate HI mass for each gas cell
-sub.g["mHI"]
-# the internal code will automatically load the needed data from the simulation
-# and calculate the HI mass for each gas cell.
-
-sub.g["mHI"].sum()
-# SimArray(3.40498175e+09, 'Msol')
 ```
 
-See [examples](examples) for more:
-- [quick_start](examples/AnastrisTNG_quick_start-cn.ipynb): Quick start
-- [galaxy_face_on](examples/AnastrisTNG_galaxy_face_on-cn.ipynb): Extract, align, and image a galaxy
-- [galaxy_func](examples/AnastrisTNG_galaxy_func-cn.ipynb): Utility functions
-- [galaxy_profile](examples/AnastrisTNG_galaxy_profile-cn.ipynb): Radial profile analysis
-- [galaxy_evolution](examples/AnastrisTNG_galaxy_evolution-cn.ipynb): Galaxy evolution and merger history
-- [galpos_SFH](examples/AnastrisTNG_galpos_SFH-cn.ipynb): Spatially-resolved star formation history with GalaxyPose `galpos.decorate`
-- [pynbody-extras](examples/AnastrisTNG_pynext-cn.ipynb): Example using `pynbody-extras` utilities
+On a cache miss, accessing `rho` on this subhalo downloads only the gas `Density` field. Access `sub.gas["iord"]` when you need gas particle IDs.
 
-## Maintainers
+### Load a subhalo and its host
 
-[@wx-ys](https://github.com/wx-ys).
+```python
+snap.load_subhalo(22842)
+host_id = int(snap.subhalos[22842].GC["SubhaloGrNr"])
+snap.load_halo(host_id)
+rho_in_host = snap.gas["rho"][snap.gas["SubhaloID"] == 22842]
+```
 
+### Read catalog columns and trace evolution
 
-## License
+```python
+halo_mass = snap.halos_GC("GroupMass")
+host_ids = snap.subhalos_GC("SubhaloGrNr")
+host_id = int(host_ids[10])
 
-[MIT](LICENSE) © Shuai Lu
+galaxy = snap.galaxy_evolution(10, fields=["SubhaloMass"])
+host = snap.halo_evolution(host_id, fields=["GroupMass"])
+mergers = snap.merger_history(10, massPartType="dm", minMassRatio=0.01)
+```
 
-## Acknowledgments
-* [illustris_python](https://github.com/illustristng/illustris_python)
-* [pytreegrav](https://github.com/mikegrudic/pytreegrav)
-* [pynbody](https://github.com/pynbody/pynbody)
+The galaxy history follows subhalo 10. The host history follows the main branch of the host’s central subhalo. Use `SnapNum` to match epochs.
+
+### Select a full TNG-Cluster zoom
+
+Pass a FoF halo ID from the chosen snapshot to select its entire zoom region.
+
+```python
+cluster = Snapshot.from_api("TNG-Cluster", 99)
+zoom = cluster.load_particle(0, groupType="Zoom")
+bh_mass = zoom.bh["mass"]
+```
+
+### Reopen cached data offline
+
+After reading the gas density online, reopen the same run and snapshot. The default cache is `~/.cache/AnastrisTNG`. If you set `cache_dir`, use the same directory in both sessions.
+
+```python
+offline = Snapshot.from_api("TNG50-4", 99, offline=True)
+rho = offline.load_particle(22842).gas["rho"]
+```
+
+Particle fields, catalog columns and SubLink data share the cache across sessions. Set `progress=False` in `from_api` to hide download progress.
+
+## Analysis notebooks
+
+| Topic | Notebooks |
+| --- | --- |
+| Getting started | [Quick start](examples/AnastrisTNG_quick_start-cn.ipynb) · [Galaxy properties](examples/AnastrisTNG_galaxy_func-cn.ipynb) |
+| Structure and imaging | [Face-on galaxy](examples/AnastrisTNG_galaxy_face_on-cn.ipynb) · [Radial and vertical profiles](examples/AnastrisTNG_profile-cn.ipynb) |
+| Evolution | [Merger trees](examples/AnastrisTNG_evolution_history-cn.ipynb) · [Particle tracing](examples/AnastrisTNG_trace_particles.ipynb) |
+| Extensions | [GalaxyPose star formation histories](examples/AnastrisTNG_galpos_SFH-cn.ipynb) · [pynbody-extras](examples/AnastrisTNG_pynext_example-cn.ipynb) |
+
+<img src="images/radial_profile.png" alt="Radial profile" height="210"> <img src="images/vertical_profile.png" alt="Vertical profile" height="210">
+
+Install the optional GalaxyPose integration with `python -m pip install galpos`. For questions about the original star formation history analysis, contact lushuai@stu.xmu.edu.cn. [GalaxyPose](https://github.com/GalaxySimAnalytics/GalaxyPose)
+
+![Spatially resolved star formation history for a TNG50 galaxy](images/TNG50_SFH_Subhalo_424289.png)
+
+## Tests
+
+Run the reader tests locally. The second command compares particles, catalogs and evolution with public Illustris-3 data and requires an API key.
+
+```shell
+python -m unittest discover -s tests -p test_remote.py -k RemoteSnapshotTest -v
+python -m unittest discover -s tests -p test_remote.py -k PublicArchiveValidation.test_original_illustris -v
+```
+
+## Project
+
+Maintained by [Shuai Lu](https://github.com/wx-ys) under the [MIT license](LICENSE). Built on [pynbody](https://github.com/pynbody/pynbody), [illustris_python](https://github.com/illustristng/illustris_python) and [pytreegrav](https://github.com/mikegrudic/pytreegrav).

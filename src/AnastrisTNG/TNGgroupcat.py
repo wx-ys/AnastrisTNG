@@ -1,13 +1,18 @@
 '''
 Load groupcatalog for Halo or Subhalo
 '''
+import warnings
+from pathlib import Path
+
+import h5py
 import numpy as np
 from pynbody import simdict, family, units
 from pynbody.array import SimArray
 from pynbody.snapshot import new
 
 from AnastrisTNG.illustris_python.groupcat import loadSingle, loadHalos, loadSubhalos, loadHeader
-from AnastrisTNG.TNGunits import groupcat_units, halo_pa_name, subhalo_pa_name
+from AnastrisTNG.illustris_python.snapshot import snapPath
+from AnastrisTNG.TNGunits import RUN_DEFAULTS, groupcat_units, halo_pa_name, subhalo_pa_name
 
 
 ##merge two simsnap and cover
@@ -192,6 +197,38 @@ def get_parttype(particle_field):
     return particle_typeload
 
 
+def local_snapshot_header(base_path, snap):
+    """Combine FoF counts with the physical parameters of snapshot chunk zero."""
+    try:
+        header = loadHeader(base_path, snap)
+    except FileNotFoundError:
+        header = {}
+    path = Path(snapPath(base_path, snap))
+    if not path.is_file():
+        # A partial mirror may start at a later chunk; the run parameters
+        # and global snapshot header values are repeated in each one.
+        chunks = (part for stem in ("snap", "snapshot")
+                  for part in path.parent.glob(f"{stem}_{snap:03d}.*.hdf5"))
+        path = next(chunks, None)
+        if path is None:
+            return header
+    with h5py.File(path, "r") as file:
+        attrs = file["Header"].attrs
+        header.update(attrs)
+        params = file["Parameters"].attrs if "Parameters" in file else {}
+        for key in ("Omega0", "OmegaLambda", "OmegaBaryon", "HubbleParam", "Sigma8", "PrimordialIndex"):
+            if key in params and key not in attrs:
+                header[key] = params[key]
+        soft_type = int(params.get("SofteningTypeOfPartType1", header.get("SofteningTypeOfPartType1", 1)))
+        for prefix, target, legacy in (("SofteningComovingType", "SofteningDMComoving", "SofteningHalo"),
+                                       ("SofteningMaxPhysType", "SofteningDMMaxPhys", "SofteningHaloMaxPhys")):
+            for key in (prefix + str(soft_type), legacy):
+                if key in params or key in header:
+                    header[target] = header.get(key, params.get(key))
+                    break
+    return header
+
+
 def get_Snapshot_property(BasePath: str, Snap: int) -> simdict.SimDict:
     """
     Retrieves properties of a specific snapshot.
@@ -208,7 +245,7 @@ def get_Snapshot_property(BasePath: str, Snap: int) -> simdict.SimDict:
     Snapshot : simdict.SimDict
         A SimDict object containing the properties of the specified snapshot.
     """
-    SnapshotHeader = loadHeader(BasePath, Snap)
+    SnapshotHeader = local_snapshot_header(BasePath, Snap)
     Snapshot = simdict.SimDict()
     Snapshot['filepath'] = BasePath
     Snapshot['read_Snap_properties'] = SnapshotHeader
@@ -216,55 +253,30 @@ def get_Snapshot_property(BasePath: str, Snap: int) -> simdict.SimDict:
     return Snapshot
 
 
-def get_eps_Mdm(Snapshot):
-    """
-    Retrieves the gravitational softenings for stars and dark matter (DM) based on the simulation run and redshift.
-
-    Parameters:
-    -----------
-    Snapshot : object
-        An object containing snapshot properties, including `z` (redshift) and `run` (simulation run).
-
-    Returns:
-    --------
-    eps_star : SimArray
-        The gravitational softening length for stars.
-    eps_dm : SimArray
-        The gravitational softening length for dark matter.
-    ------
-    'Gravitational softenings for stars and DM are in comoving kpc until z=1,
-    after which they are fixed to their z=1 values.' -- Dylan Nelson.
-    Data is sourced from https://www.tng-project.org/data/docs/background/.
-    """
-    MatchRun = {
-        'Illustris-1': [1., 0.000440896524361096],
-        'Illustris-2': [2., 0.00352717219488877],
-        'Illustris-3': [3., 0.0282173775591101],
-        'TNG50-1': [0.39, 3.1e5 / 1e10],
-        'TNG50-2': [0.78, 2.5e6 / 1e10],
-        'TNG50-3': [1.56, 2e7 / 1e10],
-        'TNG50-4': [3.12, 1.6e8 / 1e10],
-        'TNG100-1': [1., 5.1e6 / 1e10],
-        'TNG100-2': [2., 4e7 / 1e10],
-        'TNG100-3': [4., 3.2e8 / 1e10],
-        'TNG300-1': [2., 4e7 / 1e10],
-        'TNG300-2': [4., 3.2e8 / 1e10],
-        'TNG300-3': [8., 2.5e9 / 1e10],
-        'TNG-Cluster':[2, 6.1e7 / 1e10]
-    }
-
-    if Snapshot.properties['z'] > 1:
-        return SimArray(
-            MatchRun[Snapshot.properties['run']][0], units.a * units.kpc / units.h
-        ), SimArray(
-            MatchRun[Snapshot.properties['run']][1], 1e10 * units.Msol / units.h
-        )
+def get_eps_Mdm(Snapshot, header=None):
+    """Return PartType1 softening and particle mass in simulation units."""
+    if header is None:
+        if "Mdm" in Snapshot.properties and "eps" in Snapshot.properties:
+            return Snapshot.properties["eps"], Snapshot.properties["Mdm"]
+        header = {}
+    defaults = RUN_DEFAULTS[Snapshot.properties['run']]
+    if "MassTable" in header:
+        mass = header["MassTable"][1]
+    elif "MassDM" in header:
+        mass = header["MassDM"]
     else:
-        return SimArray(
-            MatchRun[Snapshot.properties['run']][0] / 2., units.kpc / units.h
-        ), SimArray(
-            MatchRun[Snapshot.properties['run']][1], 1e10 * units.Msol / units.h
-        )
+        warnings.warn("DM mass metadata unavailable; using the published run-table mass.",
+                      RuntimeWarning, stacklevel=2)
+        mass = defaults.dm_mass
+    if not np.isfinite(mass) or mass <= 0:
+        raise ValueError("Expected a positive fixed PartType1 particle mass in simulation units")
+    comoving = header.get("SofteningDMComoving", defaults.dm_softening_comoving)
+    max_phys = header.get("SofteningDMMaxPhys", defaults.dm_softening_max_phys)
+    if comoving * Snapshot.properties['a'] < max_phys:
+        eps = SimArray(comoving, units.a * units.kpc / units.h)
+    else:
+        eps = SimArray(max_phys, units.kpc / units.h)
+    return eps, SimArray(mass, 1e10 * units.Msol / units.h)
 
 def get_Subhalo_property(BasePath, Snap, subhaloID):
 

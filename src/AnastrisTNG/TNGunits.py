@@ -2,27 +2,37 @@
 units and descriptions of parameters
 '''
 
+from typing import NamedTuple
+
 from pynbody import units
 import numpy as np
 
-# Define a list of IllustrisTNG simulation runs available for analysis
-# global illustrisTNGruns
-illustrisTNGruns = [
-    'Illustris-1',
-    'Illustris-2',
-    'Illustris-3',
-    'TNG50-1',
-    'TNG50-2',
-    'TNG50-3',
-    'TNG50-4',
-    'TNG100-1',
-    'TNG100-2',
-    'TNG100-3',
-    'TNG300-1',
-    'TNG300-2',
-    'TNG300-3',
-    'TNG-Cluster'
-]
+class RunDefaults(NamedTuple):
+    box_size: float                # ckpc/h
+    dm_mass: float                 # 10^10 Msol/h, PartType1
+    dm_softening_comoving: float   # ckpc/h
+    dm_softening_max_phys: float   # physical kpc/h
+
+
+# Official /api/{run}/ fields: boxsize, mass_dm, softening_dm_comoving,
+# softening_dm_max_phys. Snapshot headers and cached run metadata take priority.
+RUN_DEFAULTS = {
+    "Illustris-1": RunDefaults(75000, 0.000440896524361096, 1, 1),
+    "Illustris-2": RunDefaults(75000, 0.00352717219488877, 2, 2),
+    "Illustris-3": RunDefaults(75000, 0.0282173775591101, 4, 4),
+    "TNG50-1": RunDefaults(35000, 0.0000307367708626464, 0.39, 0.195),
+    "TNG50-2": RunDefaults(35000, 0.000245894166901171, 0.78, 0.39),
+    "TNG50-3": RunDefaults(35000, 0.00196715333520937, 1.56, 0.78),
+    "TNG50-4": RunDefaults(35000, 0.015737226681675, 3.12, 1.56),
+    "TNG100-1": RunDefaults(75000, 0.000505574296436975, 1, 0.5),
+    "TNG100-2": RunDefaults(75000, 0.0040445943714958, 2, 1),
+    "TNG100-3": RunDefaults(75000, 0.0323567549719664, 4, 2),
+    "TNG300-1": RunDefaults(205000, 0.00398342749867548, 2, 1),
+    "TNG300-2": RunDefaults(205000, 0.0318674199894039, 4, 2),
+    "TNG300-3": RunDefaults(205000, 0.254939359915231, 8, 4),
+    "TNG-Cluster": RunDefaults(680000, 0.00413211373831018, 2, 1),
+}
+illustrisTNGruns = list(RUN_DEFAULTS)
 
 # Define common units used in TNG simulations
 UnitLength = units.kpc / units.h
