@@ -61,11 +61,11 @@ For original Illustris at redshift zero, use `Snapshot.from_api("Illustris-3", 1
 
 ```python
 sub = snap.load_particle(22842)
-rho = sub.gas["rho"]
 sub.physical_units()
+rho = sub.gas["rho"]
 ```
 
-Accessing `rho` reads the gas `Density` rows for this subhalo. The reader fetches missing HDF5 byte blocks as needed. Access `sub.gas["iord"]` when you need gas particle IDs.
+Accessing `rho` reads the gas `Density` rows for this subhalo. For local files and API reads, pynbody applies `physical_units()` to arrays loaded later as well. Use `persistent=False` to convert only the arrays already in memory. Access `sub.gas["iord"]` when you need gas particle IDs.
 
 ### Load a subhalo and its host
 
@@ -109,7 +109,13 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-Halo and subhalo particle reads use official snapshot offsets and share cached blocks of the original HDF5 files. Reading a host can reuse blocks from a previous subhalo read. Catalog and SubLink data also persist across sessions. In 3.1.0, populate the new cache online before replaying data that was previously held in per-object cutouts, catalog or count files, or SubLink arrays. Set `progress=False` in `from_api` to hide download progress.
+Halo and subhalo particle reads share losslessly compressed rows by official snapshot offsets. The reader combines valid cached rows and local snapshot data, then requests missing fields in one cutout. On a cold read it can start the cutout while looking up offsets. If the offset service is temporarily unavailable, an online read can still return the cutout. Sharing those rows across objects or reopening them offline requires a successful offset lookup.
+
+The progress display reports waits, transferred bytes, cache work and array assembly. For transfers of unknown size it shows bytes and speed. Fast cache hits stay quiet. Set `progress=False` in `from_api` to hide progress.
+
+New blocks in the shared particle row cache include a checksum. The reader can repair damaged rows from a local mirror or cutout and reuse the other blocks. Older uncompressed blocks remain readable and can be checked for shape and byte length.
+
+Catalog and SubLink data also persist across sessions. A lookup such as `sub.GC["SubhaloSpin"]` first checks for an exact cached value. On a miss, the official `info.json` endpoint returns the complete record in one response and makes later fields available from cache. If that service times out, the reader fetches only the HDF5 blocks needed to locate and read the requested field. Use `dict(sub.GC)` or `sub.load_GC()` to read the whole record. If both sources fail, the exception includes both causes. For data previously held in legacy per-object cutouts, catalog or count files, or SubLink arrays, populate the shared cache online before reopening offline.
 
 ## Analysis notebooks
 

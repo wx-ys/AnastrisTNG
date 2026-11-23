@@ -2,6 +2,7 @@
 Load groupcatalog for Halo or Subhalo
 '''
 import warnings
+from math import isclose
 from pathlib import Path
 
 import h5py
@@ -10,8 +11,9 @@ from pynbody import simdict, family, units
 from pynbody.array import SimArray
 from pynbody.snapshot import new
 
-from AnastrisTNG.illustris_python.groupcat import loadSingle, loadHalos, loadSubhalos, loadHeader
+from AnastrisTNG.illustris_python.groupcat import gcPath, loadSingle, loadHalos, loadSubhalos, loadHeader
 from AnastrisTNG.illustris_python.snapshot import snapPath
+from AnastrisTNG.TNGload import concatenate_particle_arrays
 from AnastrisTNG.TNGunits import RUN_DEFAULTS, groupcat_units, halo_pa_name, subhalo_pa_name
 
 
@@ -98,53 +100,19 @@ def simsnap_merge(f1, f2):
         bh=len(f1.bh) + len(f2.bh),
         order='dm,star,gas,bh',
     )
-    if len(f3.s) > 0:
-        if len(f1.s) == 0:
-            for i in f2.s:
-                f3.s[i] = f2.s[i]
-        elif len(f2.s) == 0:
-            for i in f1.s:
-                f3.s[i] = f1.s[i]
-        else:
-            for i in f2.s:
-                f3.s[i] = SimArray(np.append(f1.s[i], f2.s[i], axis=0), f2.s[i].units)
-
-    if len(f3.dm) > 0:
-        if len(f1.dm) == 0:
-            for i in f2.dm:
-                f3.dm[i] = f2.dm[i]
-        elif len(f2.dm) == 0:
-            for i in f1.dm:
-                f3.dm[i] = f1.dm[i]
-        else:
-            for i in f2.dm:
-                f3.dm[i] = SimArray(
-                    np.append(f1.dm[i], f2.dm[i], axis=0), f2.dm[i].units
-                )
-
-    if len(f3.g) > 0:
-        if len(f1.g) == 0:
-            for i in f2.g:
-                f3.g[i] = f2.g[i]
-        elif len(f2.g) == 0:
-            for i in f1.g:
-                f3.g[i] = f1.g[i]
-        else:
-            for i in f2.g:
-                f3.g[i] = SimArray(np.append(f1.g[i], f2.g[i], axis=0), f2.g[i].units)
-
-    if len(f3.bh) > 0:
-        if len(f1.bh) == 0:
-            for i in f2.bh:
-                f3.bh[i] = f2.bh[i]
-        elif len(f2.bh) == 0:
-            for i in f1.bh:
-                f3.bh[i] = f1.bh[i]
-        else:
-            for i in f2.bh:
-                f3.bh[i] = SimArray(
-                    np.append(f1.bh[i], f2.bh[i], axis=0), f2.bh[i].units
-                )
+    for fam in (family.star, family.dm, family.gas, family.bh):
+        first, second, target = f1[fam], f2[fam], f3[fam]
+        if not len(target):
+            continue
+        if not len(first) or not len(second):
+            source = first if len(first) else second
+            for name in source:
+                target[name] = source[name]
+            continue
+        for name in second:
+            later = second[name]
+            arrays = (np.asarray(first[name]), np.asarray(later))
+            target[name] = SimArray(concatenate_particle_arrays(name, arrays), later.units)
 
     # ---- 传播 lazy 索引:拼接 f1、f2 每 family 的原始行号 ----
     f3._loaded_index = {}
@@ -197,25 +165,76 @@ def get_parttype(particle_field):
     return particle_typeload
 
 
-def local_snapshot_header(base_path, snap):
-    """Combine FoF counts with the physical parameters of snapshot chunk zero."""
-    try:
-        header = loadHeader(base_path, snap)
-    except FileNotFoundError:
-        header = {}
-    path = Path(snapPath(base_path, snap))
-    if not path.is_file():
-        # A partial mirror may start at a later chunk; the run parameters
-        # and global snapshot header values are repeated in each one.
-        chunks = (part for stem in ("snap", "snapshot")
-                  for part in path.parent.glob(f"{stem}_{snap:03d}.*.hdf5"))
-        path = next(chunks, None)
-        if path is None:
-            return header
+_MIRROR_RUN_NAMES = {label.casefold(): label for run in RUN_DEFAULTS for label in (run, run + "-Dark")}
+
+
+def _check_run_label(value, run):
+    if isinstance(value, bytes):
+        value = value.decode(errors="replace")
+    label = _MIRROR_RUN_NAMES.get(str(value).casefold())
+    if label and label != run:
+        raise ValueError(f"local_dir identifies {label}, but the requested run is {run}")
+    return label
+
+
+def _check_mirror_header(attrs, run, snap):
+    for key in ("SimulationName", "RunName", "Simulation", "Run"):
+        if key in attrs:
+            _check_run_label(attrs[key], run)
+    for key in ("SnapNum", "SnapshotNumber"):
+        if key in attrs and int(attrs[key]) != snap:
+            raise ValueError(f"local_dir contains snapshot {attrs[key]}, expected {run} snapshot {snap}")
+    # Local headers may deliberately override the published defaults. Reject
+    # a physical value only when it identifies another published box or run.
+    for key, attribute in (("BoxSize", "box_size"), ("MassTable", "dm_mass"), ("MassDM", "dm_mass")):
+        if key not in attrs:
+            continue
+        value = attrs[key]
+        if key == "MassTable":
+            if np.size(value) < 2:
+                continue
+            value = value[1]
+        matches = [name for name, defaults in RUN_DEFAULTS.items()
+                   if isclose(value, getattr(defaults, attribute), rel_tol=1e-6)]
+        if matches and run not in matches:
+            raise ValueError(f"local_dir {key}={value} matches {', '.join(matches)}, "
+                             f"but the requested run is {run}")
+
+
+def _available_header_chunk(path, stems, snap):
+    path = Path(path)
+    if path.is_file():
+        return path
+    # The global header is repeated in each shard of a partial mirror.
+    return next((part for stem in stems for part in path.parent.glob(f"{stem}_{snap:03d}.*.hdf5")), None)
+
+
+def local_snapshot_header(base_path, snap, *, expected_run=None):
+    """Combine FoF counts with snapshot parameters, checking an API mirror before mixing sources."""
+    if expected_run:
+        for path in (Path(base_path).absolute(), Path(base_path).resolve()):
+            for part in reversed(path.parts):
+                if _check_run_label(part, expected_run):
+                    break
+    header = {}
+    path = _available_header_chunk(gcPath(base_path, snap), ("groups", "fof_subhalo_tab"), snap)
+    if path:
+        with h5py.File(path, "r") as file:
+            header.update(file["Header"].attrs)
+            if expected_run:
+                _check_mirror_header(header, expected_run, snap)
+                if "Parameters" in file:
+                    _check_mirror_header(file["Parameters"].attrs, expected_run, snap)
+    path = _available_header_chunk(snapPath(base_path, snap), ("snap", "snapshot"), snap)
+    if path is None:
+        return header
     with h5py.File(path, "r") as file:
         attrs = file["Header"].attrs
-        header.update(attrs)
         params = file["Parameters"].attrs if "Parameters" in file else {}
+        if expected_run:
+            _check_mirror_header(attrs, expected_run, snap)
+            _check_mirror_header(params, expected_run, snap)
+        header.update(attrs)
         for key in ("Omega0", "OmegaLambda", "OmegaBaryon", "HubbleParam", "Sigma8", "PrimordialIndex"):
             if key in params and key not in attrs:
                 header[key] = params[key]

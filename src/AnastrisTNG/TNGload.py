@@ -16,6 +16,21 @@ from AnastrisTNG.TNGunits import snapshot_pa_name, snapshot_units
 _FAMILY_ORDER = ['dm', 'gas', 'star', 'bh']
 
 
+def particle_id_dtype(arrays):
+    """Keep the integer bits when combining signed cutout IDs and unsigned snapshot IDs."""
+    dtypes = [array.dtype for array in arrays]
+    common = np.result_type(*dtypes)
+    if common.kind == "f" and all(dtype.kind in "iu" for dtype in dtypes):
+        return np.dtype(np.uint64)
+    return common
+
+
+def concatenate_particle_arrays(name, arrays):
+    if name in ("iord", "ParticleIDs", "TracerID", "ParentID"):
+        return np.concatenate(arrays, dtype=particle_id_dtype(arrays), casting="unsafe")
+    return np.concatenate(arrays)
+
+
 def _split_runs(index_array):
     """Split an array of global row indices into contiguous runs (order-preserving)."""
     if len(index_array) == 0:
@@ -184,7 +199,15 @@ def _family_obj(name):
     return get_family(name)
 
 
-class _LazySnap(SimSnap):
+class _TNGSimSnap(SimSnap):
+    """Retain the TNG analysis units of fields such as SFR during pynbody conversion."""
+
+    def _autoconvert_array_unit(self, ar, dims=None, ucut=3):
+        if ar.name not in self.properties.get('staunit', ()):
+            super()._autoconvert_array_unit(ar, dims, ucut)
+
+
+class _LazySnap(_TNGSimSnap):
     """A lightweight SimSnap that lazily reads particle fields from the TNG file."""
 
     def __init__(self):

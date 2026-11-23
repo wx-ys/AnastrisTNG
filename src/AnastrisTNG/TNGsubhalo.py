@@ -2,13 +2,11 @@
 Subhalo data processing
 '''
 
-from functools import reduce
-
 import numpy as np
 from pynbody.array import SimArray
 
 from AnastrisTNG.TNGgroupcat import subhaloproperties
-from AnastrisTNG.TNGsnapshot import Basehalo
+from AnastrisTNG.TNGsnapshot import Basehalo, _CatalogueViews
 
 class Subhalo(Basehalo):
     """
@@ -22,7 +20,7 @@ class Subhalo(Basehalo):
     PT : SimArray
         The particles of the subhalo. Detailed information about this can be found at
         https://www.tng-project.org/data/docs/specifications/#sec1.
-    GC : SimDict
+    GC : mutable mapping
         The group catalog for this subhalo. Detailed information about this can be found at
         https://www.tng-project.org/data/docs/specifications/#sec2.
 
@@ -32,6 +30,8 @@ class Subhalo(Basehalo):
         An object containing the particle data for the subhalo.
 
     """
+
+    _catalog_kind = "Subhalo"
 
     def __init__(self, simarray, *, defer_catalog=False):
         SubhaloID = int(simarray.filename.split('_')[-1])
@@ -64,15 +64,9 @@ class Subhalo(Basehalo):
             proper = source.catalog_arrays("Subhalo", self._GC["SubhaloID"])
         else:
             proper = subhaloproperties(
-                self.GC['filedir'], self.GC['Snapshot'], self.GC['SubhaloID']
+                self._GC['filedir'], self._GC['Snapshot'], self._GC['SubhaloID']
             )
-        self._gc_pending = False
-        self.GC.update(proper)
-        for i in self.GC:
-            if isinstance(self.GC[i], SimArray):
-                self.GC[i].sim = self.ancestor
-        if self._gc_physical:
-            self.GC_physical_units()
+        self._set_catalog(proper)
 
     def __repr__(self):
         return (
@@ -84,7 +78,10 @@ class Subhalo(Basehalo):
         )
 
 
-class Subhalos:
+class Subhalos(_CatalogueViews):
+    _view_type = Subhalo
+    _length_field = "SubhaloLenType"
+
 
     def __init__(self, snaps):
         """
@@ -96,31 +93,7 @@ class Subhalos:
             An object that contains snapshot properties.
         """
         self.__snaps = snaps.ancestor
-        self._data = {}
-
-    def keys(self):
-        """
-        Returns the keys of the stored subhalo data.
-
-        Returns:
-        --------
-        dict_keys
-            Keys representing the subhalo IDs stored in `_data`.
-        """
-        return self._data.keys()
-
-    def clear(self):
-        """
-        Clears all stored subhalo data.
-        """
-        self._data.clear()
-
-    def update(self):
-        """
-        Updates the properties of each stored subhalo.
-        """
-        for i in self._data:
-            self._data[i] = Subhalo(self._generate_value(i))
+        super().__init__()
 
     def GC(self, key, IDs = None):
         """
@@ -191,53 +164,6 @@ class Subhalos:
                 self.__snaps.properties['Subhalos_total'],
             )
             return None
-
-    def __getitem__(self, key):
-        """
-        Retrieves a subhalo object by its key.
-
-        Parameters:
-        -----------
-        key : int, str, list, or np.ndarray
-            The key(s) representing the subhalo ID(s).
-
-        Returns:
-        --------
-        Subhalo or None
-            The Subhalo object if found, otherwise None.
-        """
-        if isinstance(key, list) or isinstance(key, np.ndarray):
-            key = np.array(key).flatten()
-            for j in key:
-                el = str(j)
-                if el not in self._data:
-                    wrd = self._generate_value(el)
-                    if wrd is not None:
-                        self._data[el] = Subhalo(wrd)
-
-            return
-
-        if isinstance(key, int):
-            key = str(key)
-        if key not in self._data:
-            self._data[key] = Subhalo(self._generate_value(key))
-        if self._data[key] is None:
-            del self._data[key]
-            return None
-        return self._data[key]
-
-    def __setitem__(self, key, value):
-        """
-        Sets or updates a subhalo object in the data store.
-
-        Parameters:
-        -----------
-        key : str
-            The ID of the subhalo.
-        value : Subhalo
-            The Subhalo object to store.
-        """
-        self._data[key] = value
 
     def __repr__(self):
         """

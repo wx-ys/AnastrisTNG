@@ -61,11 +61,11 @@ snap = Snapshot.from_api("TNG50-4", 99)
 
 ```python
 sub = snap.load_particle(22842)
-rho = sub.gas["rho"]
 sub.physical_units()
+rho = sub.gas["rho"]
 ```
 
-访问这个 subhalo 的 `rho` 会读取气体 `Density` 的对应行，缓存缺失时按需下载 HDF5 字节块。需要气体粒子 ID 时，再读取 `sub.gas["iord"]`。
+访问 `rho` 时才读取这个 subhalo 的气体 `Density`。使用本地文件或 API 时，pynbody 都会将之后载入的数组自动转换为物理单位。若只想转换当前已载入的数组，可传入 `persistent=False`。需要气体粒子 ID 时，再读取 `sub.gas["iord"]`。
 
 ### 加载 subhalo 和宿主 halo
 
@@ -109,7 +109,13 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-Halo 和 subhalo 按官方快照偏移读取粒子，共享原始 HDF5 文件的缓存块。读取宿主时，可以复用之前读取 subhalo 缓存的数据块。星表和 SubLink 数据也可以跨会话复用。升级至 3.1.0 后，旧版逐对象 cutout、星表、计数和 SubLink 数组需要在线重新读取一次，才能用新缓存离线重开。在 `from_api` 中设置 `progress=False` 可以关闭下载进度显示。
+Halo 和 subhalo 按官方快照偏移共享无损压缩的粒子行。程序先复用有效缓存和本地快照，再用一次 cutout 请求缺失字段。冷读时可以同时下载 cutout 和查询偏移。偏移服务临时不可用时，在线读取仍可返回 cutout 中的数据。要跨对象共享这些行或离线重开，需要成功获取偏移。
+
+进度显示覆盖等待响应、传输、读写缓存和组装数组。下载大小未知时显示已传字节和速率，快速缓存命中时保持安静。在 `from_api` 中设置 `progress=False` 可以关闭进度显示。
+
+共享粒子行缓存中新写入的块都带校验和。遇到损坏的块时，程序可从本地镜像或 cutout 修复相应的行，其余有效块继续复用。旧版未压缩块仍可读取，并按形状和字节数校验。
+
+星表和 SubLink 数据也可以跨会话复用。`sub.GC["SubhaloSpin"]` 会先查已有的精确数据。若需联网，官方 `info.json` 在一次响应中返回完整星表条目，后续字段可直接复用。若服务超时，程序从官方 HDF5 分片仅读取定位并取出该字段所需的字节块。`dict(sub.GC)` 或 `sub.load_GC()` 可读取整个条目。两个来源都失败时，异常会保留各自的原因。旧版逐对象 cutout、星表、计数和 SubLink 数组需要在线读取一次，才能用共享缓存离线重开。
 
 ## 分析示例
 

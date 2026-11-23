@@ -2,13 +2,11 @@
 Halo data processing
 '''
 
-from functools import reduce
-
 import numpy as np
 from pynbody.array import SimArray
 
 from AnastrisTNG.TNGgroupcat import haloproperties
-from AnastrisTNG.TNGsnapshot import Basehalo
+from AnastrisTNG.TNGsnapshot import Basehalo, _CatalogueViews
 
 class Halo(Basehalo):
     """
@@ -19,7 +17,7 @@ class Halo(Basehalo):
 
     Attributes:
     ----------
-    GC : SimDict
+    GC : mutable mapping
         The group catalog for this halo. Detailed information about this can be found at
         https://www.tng-project.org/data/docs/specifications/#sec2.
 
@@ -29,6 +27,8 @@ class Halo(Basehalo):
         An object containing the particle data for the halo.
 
     """
+
+    _catalog_kind = "Halo"
 
     def __init__(self, simarray, *, defer_catalog=False):
         """
@@ -56,15 +56,9 @@ class Halo(Basehalo):
             proper = source.catalog_arrays("Halo", self._GC["HaloID"])
         else:
             proper = haloproperties(
-                self.GC['filedir'], self.GC['Snapshot'], self.GC['HaloID']
+                self._GC['filedir'], self._GC['Snapshot'], self._GC['HaloID']
             )
-        self._gc_pending = False
-        self.GC.update(proper)
-        for i in self.GC:
-            if isinstance(self.GC[i], SimArray):
-                self.GC[i].sim = self.ancestor
-        if self._gc_physical:
-            self.GC_physical_units()
+        self._set_catalog(proper)
 
     def __repr__(self):
         return (
@@ -76,7 +70,10 @@ class Halo(Basehalo):
         )
 
 
-class Halos:
+class Halos(_CatalogueViews):
+    _view_type = Halo
+    _length_field = "GroupLenType"
+
     def __init__(self, snaps):
         """
         Initializes the halos object.
@@ -87,31 +84,7 @@ class Halos:
             An object that contains snapshot properties.
         """
         self.__snaps = snaps
-        self._data = {}
-
-    def keys(self):
-        """
-        Returns the keys of the halos dictionary.
-
-        Returns:
-        --------
-        keys : list
-            List of keys in the _data dictionary.
-        """
-        return self._data.keys()
-
-    def clear(self):
-        """
-        Clears all halo data from the dictionary.
-        """
-        self._data.clear()
-
-    def update(self):
-        """
-        Updates the PT attribute of all Halo objects in the _data dictionary.
-        """
-        for i in self._data:
-            self._data[i] = Halo(self._generate_value(i))
+        super().__init__()
 
     def GC(self, key, IDs=None):
         """
@@ -181,52 +154,6 @@ class Halos:
                 self.__snaps.properties['Halos_total'],
             )
             return None
-
-    def __getitem__(self, key):
-        """
-        Retrieves a Halo object from the _data dictionary.
-
-        Parameters:
-        -----------
-        key : int, str, list, or np.ndarray
-            The key or list of keys to retrieve.
-
-        Returns:
-        --------
-        Halo object or None
-            The requested Halo object or None if not found.
-        """
-        if isinstance(key, list) or isinstance(key, np.ndarray):
-            key = np.array(key).flatten()
-            for j in key:
-                el = j
-                el = str(el)
-                if el not in self._data:
-                    wrd = self._generate_value(el)
-                    if wrd is not None:
-                        self._data[el] = Halo(wrd)
-            return
-        if isinstance(key, int):
-            key = str(key)
-        if key not in self._data:
-            self._data[key] = Halo(self._generate_value(key))
-        if self._data[key] is None:
-            del self._data[key]
-            return None
-        return self._data[key]
-
-    def __setitem__(self, key, value):
-        """
-        Sets a Halo object in the _data dictionary.
-
-        Parameters:
-        -----------
-        key : str
-            The key for the Halo object.
-        value : Halo
-            The Halo object to set.
-        """
-        self._data[key] = value
 
     def __repr__(self):
         """
