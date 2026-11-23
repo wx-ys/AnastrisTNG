@@ -65,7 +65,7 @@ rho = sub.gas["rho"]
 sub.physical_units()
 ```
 
-On a cache miss, accessing `rho` on this subhalo downloads only the gas `Density` field. Access `sub.gas["iord"]` when you need gas particle IDs.
+Accessing `rho` reads the gas `Density` rows for this subhalo. The reader fetches missing HDF5 byte blocks as needed. Access `sub.gas["iord"]` when you need gas particle IDs.
 
 ### Load a subhalo and its host
 
@@ -102,14 +102,14 @@ bh_mass = zoom.bh["mass"]
 
 ### Reopen cached data offline
 
-After reading the gas density online, reopen the same run and snapshot. The default cache is `~/.cache/AnastrisTNG`. If you set `cache_dir`, use the same directory in both sessions.
+After reading the gas density online, reopen the same run and snapshot. The default cache is `~/.cache/AnastrisTNG`, created automatically on the first cache write. If you set `cache_dir`, use the same directory in both sessions.
 
 ```python
 offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-Particle fields, catalog columns and SubLink data share the cache across sessions. Set `progress=False` in `from_api` to hide download progress.
+Halo and subhalo particle reads use official snapshot offsets and share cached blocks of the original HDF5 files. Reading a host can reuse blocks from a previous subhalo read. Catalog and SubLink data also persist across sessions. Version 3.1.0 uses a new particle cache layout and ignores legacy per-object cutout files. Set `progress=False` in `from_api` to hide download progress.
 
 ## Analysis notebooks
 
