@@ -3,7 +3,7 @@ Basehalo for subhalo and halo
 Derived array for some particle types
 '''
 
-from functools import reduce
+from collections.abc import MutableMapping
 from typing import List
 
 import numpy as np
@@ -23,6 +23,100 @@ def gravity_parallel() -> bool:
     """ Check if gravity calculations should be run in parallel based on the pynbody configuration."""
     return config["threading"] in ['True', True, 'true', '1', 1]
 
+class _CatalogueViews:
+    """Cache object views until a particle merge changes their row selections."""
+
+    def __init__(self):
+        self._data = {}
+        self._stale = set()
+
+    def keys(self):
+        return self._data.keys()
+
+    def clear(self):
+        self._data.clear()
+        self._stale.clear()
+
+    def update(self):
+        # Rebind on the next access. Refreshing an unrelated empty view may
+        # require network I/O, which must never happen while committing a merge.
+        self._stale.update(self._data)
+
+    def _record_loaded(self, number, catalog):
+        key = str(number)
+        obj = self._view_type(self._generate_value(key), defer_catalog=True)
+        obj._set_catalog(catalog)
+        self[key] = obj
+
+    def __getitem__(self, key):
+        if isinstance(key, (list, np.ndarray)):
+            for number in np.asarray(key).ravel():
+                self[str(number)]
+            return
+        key = str(key)
+        previous = self._data.get(key)
+        if previous is not None and key not in self._stale:
+            return previous
+        selection = self._generate_value(key)
+        if selection is None:
+            return None
+        obj = self._view_type(selection, defer_catalog=previous is not None)
+        if previous is not None:
+            obj._GC = previous._GC
+            obj._gc_physical = previous._gc_physical
+            obj._gc_pending = previous._gc_pending or (len(obj) > 0 and self._length_field not in obj._GC)
+        self[key] = obj
+        return obj
+
+    def __setitem__(self, key, obj):
+        key = str(key)
+        self._data[key] = obj
+        self._stale.discard(key)
+
+
+class _DeferredCatalogue(MutableMapping):
+    """Index one remote field at a time. Enumeration and edits use the complete SimDict."""
+
+    def __init__(self, obj):
+        self._obj = obj
+
+    def __getitem__(self, key):
+        obj = self._obj
+        try:
+            return obj._GC[key]
+        except KeyError:
+            if not obj._gc_pending:
+                raise
+        kind = obj._catalog_kind
+        number = obj._GC[kind + "ID"]
+        value = obj.ancestor._source.catalog_array(kind, number, key)
+        obj._set_catalog({key: value}, complete=False)
+        return obj._GC[key]
+
+    def _full(self):
+        if self._obj._gc_pending:
+            self._obj.load_GC()
+        return self._obj._GC
+
+    def __iter__(self):
+        return iter(self._full())
+
+    def __len__(self):
+        return len(self._full())
+
+    def __setitem__(self, key, value):
+        self._full()[key] = value
+
+    def __delitem__(self, key):
+        del self._full()[key]
+
+    def copy(self):
+        return self._full().copy()
+
+    def __repr__(self):
+        return repr(self._full())
+
+
 class Basehalo(SubSnap):
     """
     Represents a single halo in the simulation.
@@ -32,7 +126,7 @@ class Basehalo(SubSnap):
 
     Attributes:
     ----------
-    GC : SimDict
+    GC : mutable mapping
         The group catalog for this halo. Detailed information about this can be found at
         https://www.tng-project.org/data/docs/specifications/#sec2.
 
@@ -61,106 +155,58 @@ class Basehalo(SubSnap):
     @property
     def GC(self):
         if self._gc_pending:
+            if getattr(self.ancestor, "_source", None) is not None:
+                return _DeferredCatalogue(self)
             self.load_GC()
         return self._GC
 
     @GC.setter
     def GC(self, value):
-        self._GC = value
+        self._GC = value._full() if isinstance(value, _DeferredCatalogue) else value
         self._gc_pending = False
 
 
-    def physical_units(self, persistent: bool = False):
-        """
-        Convert the units of the simulation arrays and properties to physical units.
-            the conversion is temporary (default is False).
-        """
-        if (len(self) != len(self.ancestor)) or (hasattr(self.ancestor, '_canloadPT')):
+    def physical_units(self, persistent: bool = True):
+        """Use pynbody's physical units for loaded and, by default, future arrays."""
+        if hasattr(self.ancestor, '_canloadPT'):
             self.ancestor.physical_units(persistent=persistent)
         else:
-            dims = self.properties['baseunits'] + [units.a, units.h]
-            urc = len(dims) - 2
-            all = list(self.ancestor._arrays.values())
-            for x in self.ancestor._family_arrays:
-                if x in self.properties.get('staunit', []):
-                    continue
-                else:
-                    all += list(self.ancestor._family_arrays[x].values())
-
-            for ar in all:
-                if ar.units is not units.no_unit:
-                    self._autoconvert_array_unit(ar.ancestor, dims, urc)
-
-            for k in list(self.properties):
-                v = self.properties[k]
-                if isinstance(v, units.UnitBase):
-                    try:
-                        new_unit = v.dimensional_project(dims)
-                    except units.UnitsException:
-                        continue
-                    new_unit = reduce(
-                        lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:urc])]
-                    )
-                    new_unit *= v.ratio(new_unit, **self.conversion_context())
-                    self.properties[k] = new_unit
-                if isinstance(v, SimArray):
-                    if (v.units is not None) and (v.units is not units.no_unit):
-                        try:
-                            d = v.units.dimensional_project(dims)
-                        except units.UnitsException:
-                            return
-                        new_unit = reduce(
-                            lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
-                        )
-                        if new_unit != v.units:
-                            self.properties[k].convert_units(new_unit)
+            self.ancestor.physical_units(*self.properties['baseunits'], persistent=persistent)
             self.GC_physical_units()
-            self.ancestor._autoconvert = dims if persistent else None
 
     def GC_physical_units(self, distance='kpc', velocity='km s^-1', mass='Msol'):
-        """
-        Converts the units of the group catalog (GC) properties to physical units.
+        """Apply the physical unit basis to the object's TNG catalogue properties."""
+        self._gc_physical = True
+        self._convert_catalog_units(self._GC)
 
-        This method updates the `GC` attribute of the `Subhalo` instance to use physical units
-        for its properties, based on predefined unit conversions and the current unit context.
-
-        Conversion is applied only to properties that are not listed in `NotneedtransGCPa`.
-
-        Notes:
-        -----
-        - `self.ancestor.properties['baseunits']` provides the base units for dimensional analysis.
-        - The dimensional projection and conversion are handled using the `units` library.
-        - Properties listed in `NotneedtransGCPa` are skipped during the conversion process.
-        """
+    def _convert_catalog_units(self, keys):
         dims = self.ancestor.properties['baseunits'] + [units.a, units.h]
-        urc = len(dims) - 2
-        if self._gc_pending:
-            self._gc_physical = True
-        for k in list(self._GC):
-            if k in NotneedtransGCPa:
+        for key in keys:
+            if key in NotneedtransGCPa:
                 continue
-            v = self._GC[k]
-            if isinstance(v, units.UnitBase):
-                try:
-                    new_unit = v.dimensional_project(dims)
-                except units.UnitsException:
-                    continue
-                new_unit = reduce(
-                    lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:urc])]
-                )
-                new_unit *= v.ratio(new_unit, **self.conversion_context())
-                self._GC[k] = new_unit
-            if isinstance(v, SimArray):
-                if (v.units is not None) and (v.units is not units.no_unit):
-                    try:
-                        d = v.units.dimensional_project(dims)
-                    except units.UnitsException:
-                        return
-                    new_unit = reduce(
-                        lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
-                    )
-                    if new_unit != v.units:
-                        self._GC[k].convert_units(new_unit)
+            value = self._GC[key]
+            if isinstance(value, SimArray):
+                self._autoconvert_array_unit(value, dims)
+            elif isinstance(value, units.UnitBase):
+                target = self._cached_unit_conversion(value, dims)
+                if target is not None:
+                    self._GC[key] = target * value.ratio(target, **self.conversion_context())
+
+    def _set_catalog(self, fields, *, complete=True):
+        if complete:
+            if self._gc_pending:
+                # Keep references to cells already returned to the caller, including
+                # any in-place edits or unit conversions made before enumeration.
+                fields = {k: v for k, v in fields.items() if k not in self._GC}
+            self._gc_pending = False
+        self._GC.update(fields)
+        keys = self._GC if complete else fields
+        for key in keys:
+            value = self._GC[key]
+            if isinstance(value, SimArray):
+                value.sim = self.ancestor
+        if self._gc_physical:
+            self._convert_catalog_units(fields)
 
     def vel_center(self, mode='ssc', pos=None, r_cal='2 kpc'):
         '''
@@ -293,6 +339,9 @@ class Basehalo(SubSnap):
         retpos = kwargs.get('retpos',True)
         retvel = kwargs.get('retvel',True)
 
+        prefetch = getattr(getattr(self.ancestor, '_lazy_ctx', None), 'prefetch_fields', None)
+        if len(self) and prefetch is not None:
+            prefetch(('pos', 'mass', 'vel'), self.families())
         self.check_boundary()
         pos_center = self.center(mode=mode)
         vel_center = self.vel_center(mode=mode)
@@ -643,6 +692,9 @@ class Basehalo(SubSnap):
         '''
         calfam = self._sele_family(calfor, **kwargs)
 
+        prefetch = getattr(getattr(self.ancestor, '_lazy_ctx', None), 'prefetch_fields', None)
+        if calpa == 'mass' and len(calfam) and prefetch is not None:
+            prefetch(('pos', 'mass'), calfam.families())
         call_pa = calfam[calpa]
         
         
@@ -667,30 +719,35 @@ class Basehalo(SubSnap):
 
         return Rcall
 
-    def __getitem__(self,i):
+    def __getitem__(self, key):
         try:
-            return super().__getitem__(i)
-        except:
-            pass
-        try:
-            return self.properties[i]
-        except:
-            pass
-        raise TypeError
-    
+            return super().__getitem__(key)
+        except KeyError:
+            if isinstance(key, str):
+                try:
+                    return self.properties[key]
+                except KeyError:
+                    pass
+            raise
+
     def __getattr__(self, name):
         try:
             return super().__getattr__(name)
-        except:
+        except AttributeError:
             pass
 
         try:
             return self.properties[name]
-        except:
+        except KeyError:
             pass
 
-        if name in self.GC:
-            return self.GC[name]
+        # Notebook display probes private hooks. Those lookups should never
+        # resolve a deferred group catalog.
+        if not name.startswith('_'):
+            try:
+                return self.GC[name]
+            except KeyError:
+                pass
 
         raise AttributeError(
             "%r object has no attribute %r" % (type(self).__name__, name)
@@ -1294,6 +1351,21 @@ def _hi_h2_masses(sim):
         mHI = m * X_H * fneutral * fatomic
         mH2 = m * X_H * fneutral * (1 - fatomic)
     """
+    gas = get_family('gas')
+    ancestor = sim.ancestor
+    context = getattr(ancestor, '_lazy_ctx', None)
+    prefetch = getattr(context, 'prefetch_fields', None)
+    if prefetch is not None and sim.families() == [gas] and not sim.lazy_load_off:
+        keys = set(sim.keys())
+        available = set(context.loadable_keys(gas)) | keys
+        fields = ['ElectronAbundance', 'u', 'rho', 'mass']
+        if 'XH' not in keys:
+            fields.append('GFM_Metals')
+        if 'NeutralHydrogenAbundance' in available:
+            fields.extend(('NeutralHydrogenAbundance', 'sfr'))
+        missing = tuple(name for name in fields if name in available and name not in keys)
+        prefetch(missing, [gas])
+
     gamma = 5.0 / 3.0
     k_B = units.k.ratio('erg K^-1')
     m_p = units.m_p.ratio('g')
@@ -1302,7 +1374,8 @@ def _hi_h2_masses(sim):
     xe = sim['ElectronAbundance'].view(np.ndarray)
     u = sim['u'].in_units('cm^2 s^-2').view(np.ndarray)  # specific energy, erg g^-1
     rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)  # mass density, g cm^-3
-    m_cgs = sim['mass'].in_units('g').view(np.ndarray)  # gas mass, g
+    # A gas cell's mass in grams can exceed the float32 range.
+    mass_msol = sim['mass'].astype(np.float64, copy=False).in_units('Msol').view(np.ndarray)
 
     # mean molecular weight in proton masses, from the TNG FAQ
     mu = 4.0 / (1.0 + 3.0 * XH + 4.0 * XH * xe)
@@ -1344,10 +1417,9 @@ def _hi_h2_masses(sim):
     # atomic fraction of the neutral hydrogen (Leroy et al. 2008)
     fatomic = 1.0 / (1.0 + (P / 1.7e4) ** 0.8)
 
-    Msun = units.Msol.ratio('g')
-    mHI = SimArray(m_cgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI = SimArray(mass_msol * XH * fneutral * fatomic, units.Msol)
     mHI.sim = sim
-    mH2 = SimArray(m_cgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2 = SimArray(mass_msol * XH * fneutral * (1.0 - fatomic), units.Msol)
     mH2.sim = sim
     return mHI, mH2
 
@@ -1679,17 +1751,16 @@ def _rhosd(sim):
 
 
 def _variant_fields(sim):
-    """Shared physical arrays (cgs) needed by all the HI/H2 variants."""
+    """Shared physical arrays for the HI/H2 variants, with mass in solar masses."""
     XH = sim['XH'].view(np.ndarray).astype(np.float64)
     u = sim['u'].in_units('cm^2 s^-2').view(np.ndarray)  # erg g^-1
     rho = sim['rho'].in_units('g cm^-3').view(np.ndarray)  # g cm^-3
-    mascgs = sim['mass'].in_units('g').view(np.ndarray)  # g
-    masmsun = sim['mass'].in_units('Msol').view(np.ndarray)  # M_sun
+    mass_msol = sim['mass'].astype(np.float64, copy=False).in_units('Msol').view(np.ndarray)
     try:
         sfr = sim['sfr'].in_units('Msol yr^-1').view(np.ndarray)
     except (KeyError, OSError):
         sfr = np.zeros_like(XH)
-    return XH, u, rho, mascgs, masmsun, sfr
+    return XH, u, rho, mass_msol, sfr
 
 
 def _variant_msun_pc3(sim):
@@ -1702,64 +1773,62 @@ def _variant_temp(sim, u_cgs, gamma=5.0 / 3.0):
 
 
 def _br06_hih2(sim):
-    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    XH, u, rho, mass_msol, _ = _variant_fields(sim)
     k_B = units.k.ratio('erg K^-1')
     gamma = 5.0 / 3.0
     fneutral = _gas_neutral_fraction(sim, 'SFcells')
     P_cgs = (gamma - 1.0) * rho * u  # erg cm^-3 (total thermal)
     P_K_cm3 = P_cgs / k_B  # K cm^-3
     fatomic = _br06_partition(fneutral, P_K_cm3)
-    Msun = units.Msol.ratio('g')
-    mHI = SimArray(mascgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI = SimArray(mass_msol * XH * fneutral * fatomic, units.Msol)
     mHI.sim = sim
-    mH2 = SimArray(mascgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2 = SimArray(mass_msol * XH * fneutral * (1.0 - fatomic), units.Msol)
     mH2.sim = sim
     return mHI, mH2
 
 
 def _sh03_hih2(sim):
-    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    XH, u, rho, mass_msol, _ = _variant_fields(sim)
     k_B = units.k.ratio('erg K^-1')
     gamma = 5.0 / 3.0
     fneutral = _gas_neutral_fraction(sim, 'SH03')
     P_cgs = (gamma - 1.0) * rho * u
     P_K_cm3 = P_cgs / k_B
     fatomic = _br06_partition(fneutral, P_K_cm3)
-    Msun = units.Msol.ratio('g')
-    mHI = SimArray(mascgs / Msun * XH * fneutral * fatomic, units.Msol)
+    mHI = SimArray(mass_msol * XH * fneutral * fatomic, units.Msol)
     mHI.sim = sim
-    mH2 = SimArray(mascgs / Msun * XH * fneutral * (1.0 - fatomic), units.Msol)
+    mH2 = SimArray(mass_msol * XH * fneutral * (1.0 - fatomic), units.Msol)
     mH2.sim = sim
     return mHI, mH2
 
 
 def _gk11_hih2(sim):
-    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    XH, u, _, mass_msol, sfr = _variant_fields(sim)
     gamma = 5.0 / 3.0
     fneutral = _gas_neutral_fraction(sim, 'SFcells')
     Z = _metallicity(sim)
     rho_pc3 = _variant_msun_pc3(sim)
     temp = _variant_temp(sim, u)
-    f_H2 = _molecular_fraction_gk11(masmsun, sfr, Z, XH, rho_pc3, temp, fneutral)
-    mHI = SimArray(masmsun * XH * fneutral * (1.0 - f_H2), units.Msol)
+    f_H2 = _molecular_fraction_gk11(mass_msol, sfr, Z, XH, rho_pc3, temp, fneutral)
+    mHI = SimArray(mass_msol * XH * fneutral * (1.0 - f_H2), units.Msol)
     mHI.sim = sim
-    mH2 = SimArray(masmsun * XH * fneutral * f_H2, units.Msol)
+    mH2 = SimArray(mass_msol * XH * fneutral * f_H2, units.Msol)
     mH2.sim = sim
     return mHI, mH2
 
 
 def _kmt13_hih2(sim):
-    XH, u, rho, mascgs, masmsun, sfr = _variant_fields(sim)
+    XH, u, _, mass_msol, sfr = _variant_fields(sim)
     gamma = 5.0 / 3.0
     fneutral = _gas_neutral_fraction(sim, 'SFcells')
     Z = _metallicity(sim)
     rho_pc3 = _variant_msun_pc3(sim)
     temp = _variant_temp(sim, u)
     rho_sd = _rhosd(sim)
-    f_H2 = _molecular_fraction_kmt13(masmsun, sfr, Z, XH, rho_pc3, temp, fneutral, rho_sd)
-    mHI = SimArray(masmsun * XH * fneutral * (1.0 - f_H2), units.Msol)
+    f_H2 = _molecular_fraction_kmt13(mass_msol, sfr, Z, XH, rho_pc3, temp, fneutral, rho_sd)
+    mHI = SimArray(mass_msol * XH * fneutral * (1.0 - f_H2), units.Msol)
     mHI.sim = sim
-    mH2 = SimArray(masmsun * XH * fneutral * f_H2, units.Msol)
+    mH2 = SimArray(mass_msol * XH * fneutral * f_H2, units.Msol)
     mH2.sim = sim
     return mHI, mH2
 

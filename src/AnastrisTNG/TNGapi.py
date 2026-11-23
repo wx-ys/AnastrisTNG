@@ -1,15 +1,21 @@
 """On-demand Illustris and TNG data backed by a shared snapshot cache."""
+import errno
 import json
 import os
 import re
 import sqlite3
 import sys
 import tempfile
+import time
 from collections import OrderedDict
-from contextlib import closing, contextmanager
-from http.client import HTTPException
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack, closing, contextmanager, nullcontext
+from email.utils import parsedate_to_datetime
+from http.client import HTTPException, IncompleteRead
 from io import BytesIO, RawIOBase
 from pathlib import Path
+from socket import EAI_AGAIN
+from threading import Event, RLock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request, urlopen
@@ -34,11 +40,29 @@ from pynbody.family import get_family
 
 from .TNGunits import groupcat_units, parameter_all_Description, snapshot_pa_name, snapshot_units
 from .TNGgroupcat import local_snapshot_header
+from .TNGload import concatenate_particle_arrays
+from .TNGparticlecache import ParticleRowCache, missing_rows
 
 PART_TYPE = {"gas": 0, "dm": 1, "star": 4, "bh": 5}
 ZOOM_PART_TYPE = {**PART_TYPE, "dmlowres": 2, "tracer": 3}
 API_TYPE = {"gas": "gas", "dm": "dm", "star": "stars", "bh": "bhs"}
 CATALOG = {"Halo": "Group", "Subhalo": "Subhalo"}
+_CATALOG_RANGE_WORKERS = 3
+_CATALOG_RANGE_LIMIT = 1024**2
+_CATALOG_COUNTS_AND_INDICES = {"GroupFirstSub", "GroupLen", "GroupLenType", "GroupNsubs",
+                               "SubhaloGrNr", "SubhaloLen", "SubhaloLenType", "SubhaloParent"}
+_CLUSTER_CATALOG_DTYPES = {
+    "GroupContaminationFracByMass": "f4", "GroupContaminationFracByNumPart": "f4",
+    "GroupOrigHaloID": "i4", "GroupPrimaryZoomTarget": "i4", "SubhaloOrigHaloID": "i4",
+    "TracerLengthType": "i4", "SubhaloLengthType": "i4",
+    "GroupOffsetType": "i8", "SubhaloOffsetType": "i8", "TracerOffsetType": "i8",
+}
+_PARTICLE_COMPONENTS = {
+    "Coordinates": 3, "Velocities": 3, "BirthPos": 3, "BirthVel": 3, "CenterOfMass": 3,
+    "MagneticField": 3, "GFM_MetalsTagged": 6, "GFM_StellarPhotometrics": 8, "BH_WindTimes": 5,
+}
+_PARTICLE_INTEGERS = {"ParticleIDs", "BH_Progs", "NumTracers", "AllowRefinement", "BH_WindCount"}
+_OFFSET_RANGE = "Offsets via Range"
 FULL_SNAPS = {2, 3, 4, 6, 8, 11, 13, 17, 21, 25, 33, 40, 50, 59, 67, 72, 78, 84, 91, 99}
 
 # Published full/mini field lists
@@ -80,14 +104,146 @@ class RemoteDataError(RuntimeError):
     """A requested TNG resource could not be retrieved or validated."""
 
 
+class _RangeCacheMiss(RemoteDataError):
+    """A cache-only lookup did not cover the requested raw bytes."""
+
+
+class _IncompleteTransfer(HTTPException):
+    """The response body ended before the declared byte count."""
+
+
+def _set_byte_total(bar, total):
+    bar.total = total
+    if _IN_NOTEBOOK and hasattr(bar, "container"):
+        # tqdm's notebook widget keeps its original maximum when .total
+        # changes. Hide that gauge while only a byte count and rate are known.
+        indicator = bar.container.children[1]
+        indicator.layout.display = "none" if total is None else None
+        if total is not None:
+            indicator.max = max(1, total)
+            indicator.layout.width = None
+            indicator.bar_style = ""
+
+
+class _ParticleProgress:
+    """Track all wire bytes for one particle selection."""
+
+    def __init__(self, source, stack, description):
+        self.source, self.description = source, description
+        self.bar = None
+        self.transports = set()
+        self.expected = self.received = 0
+        self.unknown_length = False
+        self.pending = 0
+        self.stage = ""
+        self._lock = RLock()
+        self._bars = ExitStack()
+        self._monitor = None
+        self._closed = Event()
+        stack.push(self._close)
+
+    def start(self):
+        with self._lock:
+            if self._closed.is_set() or self.bar is not None or self.source.progress is False:
+                return
+            self.bar = self._bars.enter_context(
+                self.source._progress(self.description, total=None, unit="B", unit_scale=True))
+            if self.stage:
+                self.bar.set_postfix_str(self.stage)
+
+    def phase(self, stage):
+        """Show slow cache work as well as transfers, keeping quick cache hits quiet."""
+        if self.source.progress is False:
+            return
+        with self._lock:
+            if self._closed.is_set() or self.stage == stage:
+                return
+            self.stage = stage
+            if self.bar is not None:
+                # The previous transfer may be at 100% while validation or a
+                # database write still has to finish. reserve() sets the next
+                # known transfer size, complete() marks the whole operation.
+                _set_byte_total(self.bar, None)
+                self.bar.set_postfix_str(stage)
+            if self._monitor is None and (self.source.progress is True or _IN_NOTEBOOK or sys.stderr.isatty()):
+                self._monitor = Thread(target=self._refresh_slow, daemon=True)
+                self._monitor.start()
+
+    def _refresh_slow(self):
+        if self._closed.wait(0.5):
+            return
+        self.start()
+        while not self._closed.wait(1.0):
+            with self._lock:
+                if self.bar is not None and not self._closed.is_set():
+                    self.bar.refresh()
+
+    @contextmanager
+    def waiting(self, resource):
+        with self._lock:
+            self.start()
+            self.pending += 1
+            if self.bar is not None:
+                _set_byte_total(self.bar, None)
+            self.phase(f"Waiting for {resource}")
+        try:
+            yield
+        finally:
+            with self._lock:
+                self.pending -= 1
+
+    def reserve(self, size):
+        if self.source.progress is False:
+            return
+        with self._lock:
+            if size is None:
+                self.unknown_length = True
+            else:
+                self.expected += size
+            if self.bar is not None:
+                _set_byte_total(self.bar, None if self.unknown_length or self.pending else self.expected)
+                self.bar.refresh()
+
+    def update(self, size):
+        with self._lock:
+            if self.bar is not None:
+                self.received += size
+                self.bar.update(size)
+
+    def mark_transport(self, transport):
+        with self._lock:
+            self.start()
+            if self.bar is None or transport in self.transports:
+                return
+            self.transports.add(transport)
+            label = "Cutout | offsets via Range" if len(self.transports) > 1 else transport
+            self.bar.set_description_str(f"[{label}] {self.description}")
+
+    def complete(self):
+        with self._lock:
+            if self.bar is not None:
+                _set_byte_total(self.bar, None if self.unknown_length or not self.received else self.received)
+                self.bar.set_postfix_str("Complete")
+
+    def _close(self, exc_type, exc, traceback):
+        with self._lock:
+            self._closed.set()
+            if exc is not None and self.bar is not None:
+                self.bar.set_postfix_str("Interrupted" if exc_type is KeyboardInterrupt else "Failed")
+            self._bars.__exit__(exc_type, exc, traceback)
+            if exc is not None and _IN_NOTEBOOK and hasattr(self.bar, "container"):
+                self.bar.container.children[1].bar_style = "danger"
+
+
 class _RangeFile(RawIOBase):
     """Seekable, read-only view of an official static HDF5 file for h5py."""
 
     block_size = 64 * 1024
 
-    def __init__(self, source, endpoint, bar, cache=None, lock=None):
+    def __init__(self, source, endpoint, bar, cache=None, lock=None, *, cache_only=False):
         self.source, self.endpoint, self.bar = source, endpoint, bar
         self.cache, self.lock = cache, lock
+        self.cache_only = cache_only
         self.position = 0
         self.size = None
         self.validator = None
@@ -129,33 +285,49 @@ class _RangeFile(RawIOBase):
             next_hit = self.cache.execute(
                 "SELECT min(start) FROM blocks WHERE start>? AND start<?", (start, stop)
             ).fetchone()[0]
-            data = self.fetch(start, stop if next_hit is None else next_hit)
+            end = stop if next_hit is None else next_hit
+            data = self.fetch(start, end)
             with self.cache:
-                self.cache.execute("INSERT OR REPLACE INTO file_info VALUES (1, ?, ?)",
-                                   (self.size, self.validator))
-                self.cache.executemany("INSERT INTO blocks VALUES (?, ?)",
-                                       ((start + i, memoryview(data)[i:i+self.block_size])
-                                        for i in range(0, len(data), self.block_size)))
+                self._store_blocks(start, data)
             return data
 
+    def _store_blocks(self, start, data):
+        self.cache.execute("INSERT OR REPLACE INTO file_info VALUES (1, ?, ?)", (self.size, self.validator))
+        self.cache.executemany("INSERT INTO blocks VALUES (?, ?)",
+                               ((start + i, memoryview(data)[i:i+self.block_size])
+                                for i in range(0, len(data), self.block_size)))
+
     def _check_available(self, start):
+        if self.cache_only:
+            raise _RangeCacheMiss(f"Uncached block for {self.endpoint} at {start}")
         self.source._check_online(f"{self.endpoint} bytes starting at {start}")
 
+    def cached_row_slices(self, byte_offset, row_size, first, rows):
+        byte_start = byte_offset + rows.start * row_size
+        byte_stop = byte_offset + rows.stop * row_size
+        first_block = byte_start // self.block_size * self.block_size
+        blocks = self.cache.execute("SELECT start FROM blocks WHERE start>=? AND start<? ORDER BY start",
+                                    (first_block, byte_stop))
+        coverage = ((start, start + self.block_size) for (start,) in blocks)
+        # Exclude any row touching a missing byte block, even if only part of
+        # the row lies in that block.
+        gaps = [((lo - byte_offset) // row_size, (hi - byte_offset + row_size - 1) // row_size)
+                for lo, hi in missing_rows(byte_start, byte_stop, coverage)]
+        return [(first + lo - rows.start, slice(lo, hi))
+                for lo, hi in missing_rows(rows.start, rows.stop, gaps)]
+
     def fetch(self, start, stop):
+        return self._accept_range(self._request_range(start, stop, self.bar))
+
+    def _request_range(self, start, stop, bar):
+        progress = bar if isinstance(bar, _ParticleProgress) else None
+        if progress is not None:
+            progress.mark_transport(_OFFSET_RANGE)
         headers = {"Range": f"bytes={start}-{stop - 1}"}
         if self.validator is not None:
             headers["If-Range"] = self.validator
-        if self.target:
-            try:
-                response = urlopen(Request(self.target, headers=headers), timeout=120)
-            except HTTPError as exc:
-                exc.close()
-                if exc.code != 403:
-                    raise RemoteDataError(f"Range request failed for {self.endpoint}: HTTP {exc.code}") from None
-                self.target = None
-        if not self.target:
-            response = self.source._open(self.endpoint, self.endpoint, headers=headers)
-        with response:
+
+        def read(response):
             match = re.fullmatch(r"bytes (\d+)-(\d+)/(\d+)", response.headers.get("Content-Range", ""))
             if response.status != 206 or not match:
                 raise RemoteDataError(f"Server did not honor HTTP Range for {self.endpoint}")
@@ -167,16 +339,90 @@ class _RangeFile(RawIOBase):
                 validator = response.headers.get("Last-Modified")
             if self.validator is not None and validator is not None and validator != self.validator:
                 raise RemoteDataError(f"Source file changed while reading {self.endpoint}")
-            data = response.read()
-            if len(data) != last + 1 - first:
-                raise RemoteDataError(f"Incomplete byte range for {self.endpoint}")
-            self.size = size
-            if self.cache is not None:
-                self.validator = self.validator or validator
-            if response.geturl() != urljoin(self.source.url, self.endpoint):
-                self.target = response.geturl()
-        self.bar.update(len(data))
+            if progress is not None:
+                progress.phase("Reading offsets")
+            data = bytearray()
+            _copy_response(response, data.extend, bar, last + 1 - first,
+                           f"Incomplete byte range for {self.endpoint}")
+            location = response.geturl()
+            return data, size, validator, location
+
+        return self.source._open(self.endpoint, self.endpoint, headers=headers, read=read,
+                                 target=self.target, progress=progress)
+
+    def _accept_range(self, response):
+        data, size, validator, location = response
+        # Concurrent catalogue requests can each be the first to observe a
+        # validator. Check again before their blocks enter the shared cache.
+        if self.size not in (None, size) or self.validator and validator and self.validator != validator:
+            raise RemoteDataError(f"Source file changed while reading {self.endpoint}")
+        self.size = size
+        if self.cache is not None:
+            self.validator = self.validator or validator
+        self.target = location if location != urljoin(self.source.url, self.endpoint) else None
         return data
+
+    def _prefetch_catalog_blocks(self, blocks, pool):
+        """Combine adjacent cache misses and fetch up to three disjoint spans at once."""
+        if len(blocks) < 2:
+            return
+        with self.lock:
+            self._load_file_info()
+            cached = self.cache.execute("SELECT start FROM blocks WHERE start BETWEEN ? AND ?",
+                                        (min(blocks), max(blocks)))
+            blocks.difference_update(start for (start,) in cached)
+            if len(blocks) < 2:
+                return
+            spans = []
+            for start in sorted(blocks):
+                stop = min(start + self.block_size, self.size)
+                if spans and start == spans[-1][1] and stop - spans[-1][0] <= _CATALOG_RANGE_LIMIT:
+                    spans[-1] = (spans[-1][0], stop)
+                else:
+                    spans.append((start, stop))
+            for first in range(0, len(spans), _CATALOG_RANGE_WORKERS):
+                batch = spans[first:first + _CATALOG_RANGE_WORKERS]
+                futures = [pool.submit(self._request_range, start, stop, None) for start, stop in batch]
+                responses = [future.result() for future in futures]
+                # HDF5 and SQLite stay in the caller. Publish each batch only
+                # after all responses have arrived and passed the validator checks.
+                with self.cache:
+                    for (start, _), response in zip(batch, responses):
+                        data = self._accept_range(response)
+                        self._store_blocks(start, data)
+                        self.bar.update(len(data))
+
+    def catalog_row_datasets(self, group, row):
+        """Prime only the HDF5 blocks needed for one row of contiguous catalogue columns."""
+        if self.cache_only or self.source.offline or self.size <= self.block_size or len(group) < 4:
+            return group.items()
+        block = self.block_size
+        with ThreadPoolExecutor(max_workers=_CATALOG_RANGE_WORKERS) as pool:
+            if group.file.userblock_size == 0:
+                # Hard links in a native HDF5 file contain the object header address.
+                headers = set()
+                for name in group:
+                    encoded = name.encode("utf8") if isinstance(name, str) else name
+                    link = group.id.links.get_info(encoded)
+                    if link.type == h5py.h5l.TYPE_HARD and 0 <= link.u < self.size:
+                        headers.add(link.u // block * block)
+                self._prefetch_catalog_blocks(headers, pool)
+            datasets = list(group.items())
+            blocks = set()
+            file_id = group.file.id
+            for _, dataset in datasets:
+                if (not isinstance(dataset, h5py.Dataset) or not dataset.shape or dataset.dtype.hasobject
+                        or dataset.file.id != file_id):
+                    continue
+                offset = dataset.id.get_offset()
+                if offset is None or row >= len(dataset):
+                    continue
+                row_size = dataset.dtype.itemsize * int(np.prod(dataset.shape[1:]))
+                start = offset + row * row_size
+                if 0 < row_size <= _CATALOG_RANGE_LIMIT and 0 <= start < start + row_size <= self.size:
+                    blocks.update(range(start // block * block, start + row_size, block))
+            self._prefetch_catalog_blocks(blocks, pool)
+        return datasets
 
     def seek(self, offset, whence=0):
         position = (0, self.position, self.size)[whence] + offset
@@ -249,6 +495,63 @@ def _download_forbidden(error):
             and (host.startswith("data-") or host.startswith("data.")))
 
 
+def _transient_get_error(error):
+    if isinstance(error, HTTPError):
+        return error.code in (408, 429) or 500 <= error.code < 600
+    if isinstance(error, URLError):
+        error = error.reason
+    return (isinstance(error, (TimeoutError, ConnectionError, IncompleteRead, _IncompleteTransfer))
+            or isinstance(error, OSError) and error.errno in (EAI_AGAIN, errno.EHOSTUNREACH, errno.ENETUNREACH))
+
+
+def _catalog_fallback_error(error):
+    if isinstance(error, HTTPError) and error.code == 429:
+        return False
+    return _transient_get_error(error) or _download_forbidden(error)
+
+
+def _retry_delay(error, attempt):
+    header = error.headers.get("Retry-After") if isinstance(error, HTTPError) and error.headers else None
+    if header:
+        try:
+            return max(0, int(header))
+        except ValueError:
+            try:
+                return max(0, parsedate_to_datetime(header).timestamp() - time.time())
+            except (TypeError, ValueError, OverflowError):
+                pass
+    return 0.25 * 2 ** attempt
+
+
+def _response_length(response, resource):
+    header = response.headers.get("Content-Length")
+    if header is None:
+        return None
+    if not re.fullmatch(r"[0-9]+", str(header).strip()):
+        raise RemoteDataError(f"Invalid download length for {resource}")
+    return int(header)
+
+
+def _copy_response(response, write, bar, total, incomplete_message):
+    progress = bar if isinstance(bar, _ParticleProgress) else None
+    if progress is not None:
+        progress.reserve(total)
+    written = 0
+    try:
+        # HTTPResponse.read1 returns available bytes without waiting for an entire block.
+        read = getattr(response, "read1", response.read)
+        while block := read(1024 * 1024):
+            write(block)
+            written += len(block)
+            if bar is not None:
+                bar.update(len(block))
+        if total is not None and written != total:
+            raise _IncompleteTransfer(f"{incomplete_message} ({written} of {total} bytes)")
+    finally:
+        if progress is not None and total is not None and written != total:
+            progress.reserve(written - total)
+
+
 @contextmanager
 def temporary_path(destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -281,6 +584,48 @@ def align_rows(ids, wanted):
     return order[rows]
 
 
+def _json_catalog_array(run, name, value, known_field):
+    """Recover the public HDF5 dtype erased by info.json and older JSON row caches."""
+    try:
+        array = np.array(value)
+    except ValueError:
+        return np.array(value, dtype=object)  # Preserve ragged supplementary data.
+    if isinstance(value, list) and array.dtype.kind == "f" and np.any(array >= 2**63):
+        # NumPy can infer float64 for a JSON list mixing small and large integers.
+        exact = np.array(value, dtype=object)
+        if all(isinstance(x, int) for x in exact.flat):
+            array = exact if exact.min() < 0 or exact.max() >= 2**64 else exact.astype("u8")
+    if not known_field or array.dtype.kind not in "biuf":
+        return array
+    original = run.startswith("Illustris-")
+    if name in _CATALOG_COUNTS_AND_INDICES:
+        dtype = "u4" if original else "i4"
+        if name == "GroupFirstSub" and isinstance(value, int) and value in (-1, 2**32 - 1, 2**64 - 1):
+            return np.array(2**32 - 1 if original else -1, dtype=dtype)
+    elif name in _CLUSTER_CATALOG_DTYPES:
+        if run != "TNG-Cluster":
+            return array
+        dtype = _CLUSTER_CATALOG_DTYPES[name]
+    elif name == "SubhaloIDMostbound":
+        dtype = "u8"
+    elif name == "SubhaloFlag":
+        dtype = "?"
+    elif original and name.startswith("SubhaloGasMetallicity"):
+        dtype = "f8"
+    else:
+        dtype = "f4"
+    dtype = np.dtype(dtype)
+    if dtype.kind in "biu":
+        low, high = (0, 1) if dtype.kind == "b" else (np.iinfo(dtype).min, np.iinfo(dtype).max)
+        if array.dtype.kind not in "biu" or (array.size and (int(array.min()) < low or int(array.max()) > high)):
+            return array  # Keep unknown sentinels or wider data intact.
+    with np.errstate(over="ignore"):
+        native = array.astype(dtype, copy=False)
+    if dtype.kind == "f" and np.any(np.isfinite(array) & ~np.isfinite(native)):
+        return array
+    return native
+
+
 class ApiSource:
     def __init__(self, run, snap, cache_dir, local_dir, api_key, progress, offline):
         self.original_illustris = re.fullmatch(r"Illustris-[1-3]", run) is not None
@@ -294,7 +639,11 @@ class ApiSource:
         self.run, self.snap = run, int(snap)
         self.url = f"https://www.tng-project.org/api/{run}/snapshots/{snap}/"
         self.root = Path(cache_dir).expanduser() / run / f"snap_{snap:03d}"
-        self.local = os.fspath(local_dir) if local_dir is not None else None
+        self.local = os.fspath(Path(local_dir).expanduser()) if local_dir is not None else None
+        self._local_header = local_snapshot_header(self.local, self.snap, expected_run=run) if self.local else {}
+        cached_header = self.root / "header.json"
+        if self._local_header and cached_header.is_file():
+            self._check_mirror_counts(json.loads(cached_header.read_text(encoding="utf8")))
         self.key = api_key
         self.progress, self.offline = progress, offline
         schema = ILLUSTRIS_FIELDS if self.original_illustris else MINI
@@ -308,13 +657,16 @@ class ApiSource:
             if snap in FULL_SNAPS:
                 self.fields["gas"].add("AllowRefinement")
         self._catalogs = {}
+        self._archive_catalogs = set()
+        self._ranges_via_api = set()
         self._particle_files = None
 
     def _check_online(self, resource):
         if self.offline:
             raise RemoteDataError(f"Offline cache miss: {self.run} / {self.snap} / {resource}")
 
-    def _open(self, suffix, resource, headers=None):
+    def _open(self, suffix, resource, headers=None, *, read=None, target=None, progress=None, catalog_fallback=False):
+        """Perform an idempotent GET, retrying its body reader along with the request."""
         self._check_online(resource)
         key = self.key or os.environ.get("TNG_API_KEY")
         if not key:
@@ -327,19 +679,60 @@ class ApiSource:
             req.add_header("Accept", "application/json")
         # Authenticate only the original API request. urllib drops this header on redirects.
         req.add_unredirected_header("api-key", key)
-        for attempt in range(2):
+        if target and suffix in self._ranges_via_api:
+            target = None
+        refreshed = False
+        retries = 0
+        wait_budget = 10.0
+        started = time.monotonic()
+        while True:
+            body_started = False
             try:
-                return urlopen(req, timeout=120)
-            except HTTPError as exc:
-                exc.close()
-                if attempt == 0 and _download_forbidden(exc):
-                    # Request a fresh download location through the authenticated API.
-                    req.add_header("Cache-Control", "no-cache")
+                request = Request(target, headers=headers or {}) if target else req
+                with progress.waiting(resource) if progress is not None else nullcontext():
+                    # The exact object catalogue is generated on demand. A healthy
+                    # response can take over 30 seconds before its headers arrive.
+                    response = urlopen(request, timeout=60 if catalog_fallback else 120)
+                body_started = True
+                if read is None:
+                    return response
+                with response:
+                    return read(response)
+            except (OSError, HTTPException) as exc:
+                if isinstance(exc, HTTPError):
+                    exc.close()
+                    if not refreshed and exc.code == 403 and (target or _download_forbidden(exc)):
+                        # Only the original API is authenticated. Renew an expired
+                        # download URL without forwarding that key to the data host.
+                        if target:
+                            # Reusing redirects from this file can cost a failed
+                            # round trip on every block. Let the API issue each one.
+                            self._ranges_via_api.add(suffix)
+                        refreshed = True
+                        target = None
+                        req.add_header("Cache-Control", "no-cache")
+                        continue
+                # info.json has a targeted HDF5 fallback. A slow gateway need
+                # not time out repeatedly before we use the static archive.
+                delay = _retry_delay(exc, retries)
+                elapsed = time.monotonic() - started
+                # A slow gateway can spend minutes preparing a cutout and then
+                # return 504. Restarting that same wait compounds the outage.
+                # A body interrupted during transfer can still be retried.
+                retry_in_time = body_started or delay <= 30 - elapsed
+                if (retry_in_time and _transient_get_error(exc) and retries < 2 and delay <= wait_budget
+                        and not (catalog_fallback and _catalog_fallback_error(exc))):
+                    retries += 1
+                    wait_budget -= delay
+                    if progress is not None:
+                        progress.phase(f"Retrying {resource} in {delay:g} s")
+                    time.sleep(delay)
                     continue
-                host = urlsplit(exc.geturl()).hostname
-                raise RemoteDataError(f"TNG request failed for {resource} at {host}: {exc}") from exc
-            except URLError as exc:
-                raise RemoteDataError(f"TNG request failed for {resource}: {exc}") from exc
+                host = f" at {urlsplit(exc.geturl()).hostname}" if isinstance(exc, HTTPError) else ""
+                detail = f" (retry requested after {delay} s)" if delay > wait_budget else ""
+                if not body_started and elapsed >= 30:
+                    detail += f" (waited {elapsed:.1f} s)"
+                raise RemoteDataError(f"TNG request failed for {resource}{host}: {exc}{detail}") from exc
 
     def _json(self, directory, filename, endpoint, resource, validate):
         path = directory / filename
@@ -354,10 +747,24 @@ class ApiSource:
             write_json(path, value)
             return value
 
-    def _fetch_json(self, endpoint, resource, validate):
-        with self._progress(f"Reading {resource}", total=1, unit="request") as bar:
-            with self._open(endpoint, resource) as response:
-                value = validate(json.load(response))
+    def _fetch_json(self, endpoint, resource, validate, *, catalog_fallback=False):
+        def read(response):
+            total = _response_length(response, resource)
+            data = response.read()
+            if total is not None and len(data) != total:
+                raise _IncompleteTransfer(f"Incomplete download for {resource} ({len(data)} of {total} bytes)")
+            return json.loads(data)
+
+        with self._progress(f"Waiting for {resource}", total=1, unit="request") as bar:
+            try:
+                data = self._open(endpoint, resource, read=read, catalog_fallback=catalog_fallback)
+            except RemoteDataError as exc:
+                cause = exc.__cause__
+                if catalog_fallback and _catalog_fallback_error(cause):
+                    reason = f"HTTP {cause.code}" if isinstance(cause, HTTPError) else str(cause)
+                    bar.set_postfix_str(reason)
+                raise
+            value = validate(data)
             bar.update(1)
         return value
 
@@ -399,18 +806,20 @@ class ApiSource:
             self._store_object_value(kind, number, name, json.dumps(value), local=local)
             return value
 
+    def _check_mirror_counts(self, header):
+        for field in ("Ngroups_Total", "Nsubgroups_Total"):
+            if field in self._local_header and field in header and self._local_header[field] != header[field]:
+                raise ValueError(f"local_dir {field}={self._local_header[field]} differs from "
+                                 f"{self.run} snapshot {self.snap} catalog count {header[field]}")
+
     def header(self):
-        local = local_snapshot_header(self.local, self.snap) if self.local else {}
+        local = self._local_header
 
         def convert(meta):
             if meta["number"] != self.snap:
                 raise RemoteDataError("Snapshot metadata has the wrong snapshot number")
             return dict(Time=1.0 / (1 + meta["redshift"]),
                         Ngroups_Total=meta["num_groups_fof"], Nsubgroups_Total=meta["num_groups_subfind"])
-
-        header = {}
-        if not {"Time", "Ngroups_Total", "Nsubgroups_Total"} <= local.keys():
-            header = self._json(self.root, "header.json", "", "snapshot metadata", convert)
 
         def run_parameters(meta):
             if meta["name"] != self.run:
@@ -422,31 +831,52 @@ class ApiSource:
                         SofteningDMComoving=meta["softening_dm_comoving"],
                         SofteningDMMaxPhys=meta["softening_dm_max_phys"])
 
+        jobs = []
+        if not {"Time", "Ngroups_Total", "Nsubgroups_Total"} <= local.keys():
+            jobs.append((self.root, "header.json", "", "snapshot metadata", convert))
         run_fields = {"BoxSize", "Omega0", "OmegaLambda", "HubbleParam", "OmegaBaryon",
                       "SofteningDMComoving", "SofteningDMMaxPhys"}
-        if "MassTable" not in local or not run_fields <= local.keys():
-            directory = self.root.parent
-            # Old caches contain the original cosmology in header.json. Keep
-            # them readable offline and acquire precise run parameters online.
-            if not self.offline or (directory / "simulation.json").is_file():
-                header.update(self._json(directory, "simulation.json", "../../", "simulation metadata", run_parameters))
-            elif not {"HubbleParam", "Omega0", "OmegaLambda"} <= (header.keys() | local.keys()):
-                self._check_online("simulation metadata")
+        need_run = not ({"MassTable", "MassDM"} & local.keys()) or not run_fields <= local.keys()
+        directory = self.root.parent
+        if need_run and (not self.offline or (directory / "simulation.json").is_file()):
+            jobs.append((directory, "simulation.json", "../../", "simulation metadata", run_parameters))
+        header = {}
+        if len(jobs) == 2 and not self.offline and all(not (job[0] / job[1]).is_file() for job in jobs):
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                futures = [pool.submit(self._json, *job) for job in jobs]
+                for future in futures:
+                    header.update(future.result())
+        else:
+            for job in jobs:
+                header.update(self._json(*job))
+        self._check_mirror_counts(header)
+        # Published HDF5 cosmology uses float64 scalars. Python floats from JSON
+        # preserve float32 in NumPy 2 array arithmetic during unit conversion.
+        for field in ("Time", "HubbleParam", "Omega0", "OmegaLambda", "OmegaBaryon"):
+            if field in header:
+                header[field] = np.float64(header[field])
         header.update(local)
+        # Older offline caches store the run cosmology in the snapshot header.
+        if need_run and not {"HubbleParam", "Omega0", "OmegaLambda"} <= header.keys():
+            self._check_online("simulation metadata")
         return header
 
     @contextmanager
-    def _range_cache(self, filename, *, particles=False):
-        legacy_catalog = self.original_illustris and re.fullmatch(r"groupcat-\d+\.\d+\.hdf5", filename)
-        if not particles and not legacy_catalog and not re.fullmatch(r"(?:sublink|offsets)\.\d+\.hdf5", filename):
+    def _range_cache(self, filename, *, particles=False, cache_only=False):
+        metadata = re.fullmatch(r"(?:groupcat-\d+\.\d+|(?:sublink|offsets)\.\d+)\.hdf5", filename)
+        if not particles and not metadata:
+            if cache_only:
+                raise _RangeCacheMiss(f"No cached blocks for {filename}")
             self._check_online(filename)
             yield None, None
             return
         directory = self.root / "particles" if particles else self.root.parent / "hdf5-blocks"
         path = directory / (filename + ".sqlite3")
         if not path.is_file():
+            if particles or cache_only:
+                raise _RangeCacheMiss(f"No cached blocks for {filename}")
             self._check_online(filename)
-        with self._block_database(path, writable=not self.offline) as result:
+        with self._block_database(path, writable=not (self.offline or particles or cache_only)) as result:
             yield result
 
     @staticmethod
@@ -468,38 +898,52 @@ class ApiSource:
             yield db, lock
 
     @contextmanager
-    def _raw_file(self, filename, local=None, *, particles=False):
-        """Use a local raw file or read HDF5 metadata and datasets by byte range."""
+    def _file_with_ranges(self, filename, local=None, *, particles=False, progress=None, cache_only=False):
+        """Read raw HDF5 metadata by range, or replay previously cached particle ranges."""
         cached = self.root / "groupcat" / filename
         path = next((p for p in (local, cached) if p and Path(p).is_file()), None)
         if path:
             with h5py.File(path, "r") as file:
-                yield file
+                yield file, None
             return
-        with self._range_cache(filename, particles=particles) as (db, lock):
-            with self._progress(f"Reading {filename}", total=None, unit="B", unit_scale=True) as bar:
-                stream = _RangeFile(self, "../../files/" + filename, bar, db, lock)
+        with self._range_cache(filename, particles=particles, cache_only=cache_only) as (db, lock):
+            with (nullcontext(progress) if progress is not None or cache_only else
+                  self._progress(f"Reading {filename}", total=None, unit="B", unit_scale=True)) as bar:
+                stream = _RangeFile(self, "../../files/" + filename, bar, db, lock, cache_only=particles or cache_only)
                 with h5py.File(stream, "r") as file:
-                    yield file
+                    yield file, stream
 
-    def _offset_file(self):
+    @contextmanager
+    def _raw_file(self, filename, local=None, *, progress=None, cache_only=False):
+        with self._file_with_ranges(filename, local, progress=progress, cache_only=cache_only) as (file, _):
+            yield file
+
+    def _offset_file(self, progress=None, *, cache_only=False):
         local = offsetPath(self.local, self.snap) if self.local else None
-        return self._raw_file(f"offsets.{self.snap}.hdf5", local)
+        return self._raw_file(f"offsets.{self.snap}.hdf5", local, progress=progress, cache_only=cache_only)
 
-    def _raw_groupcat(self, chunk):
+    def _groupcat_with_ranges(self, chunk, progress=None, *, cache_only=False):
         local = gcPath(self.local, self.snap, chunk) if self.local else None
-        return self._raw_file(f"groupcat-{self.snap}.{chunk}.hdf5", local)
+        return self._file_with_ranges(f"groupcat-{self.snap}.{chunk}.hdf5", local,
+                                      progress=progress, cache_only=cache_only)
 
-    def _file_offsets(self, group):
+    @contextmanager
+    def _raw_groupcat(self, chunk, progress=None, *, cache_only=False):
+        with self._groupcat_with_ranges(chunk, progress, cache_only=cache_only) as (file, _):
+            yield file
+
+    def _file_offsets(self, group, progress=None, *, cache_only=False):
         if self.original_illustris:
-            with self._raw_groupcat(0) as file:
+            with self._raw_groupcat(0, progress, cache_only=cache_only) as file:
                 return file["Header"].attrs["FileOffsets_" + group]
-        with self._offset_file() as file:
+        with self._offset_file(progress, cache_only=cache_only) as file:
             return file["FileOffsets/" + group][:]
 
-    def _catalog_location(self, group, number):
-        starts = self._file_offsets(group)
+    def _catalog_location(self, group, number, progress=None, *, cache_only=False):
+        starts = self._file_offsets(group, progress, cache_only=cache_only)
         chunk = int(np.searchsorted(starts, number, side="right")) - 1
+        if chunk < 0:
+            raise RemoteDataError(f"Invalid file offsets for {group} {number} in {self.run} snapshot {self.snap}")
         return [chunk, int(number - starts[chunk])]
 
     def _layout(self, path, read):
@@ -583,19 +1027,34 @@ class ApiSource:
             fields = self._layout(self.root / "groupcat" / group / "schema.json", available_fields)
         single = len(fields) == 1
         fields = self._field_names(fields)
+        pieces = {field: [] for field in fields}
+        for chunk in chunks:
+            with h5py.File(chunk, "r") as file:
+                catalogue = file.get(group)
+                if catalogue is not None:
+                    for field in fields:
+                        if field in catalogue:
+                            pieces[field].append(catalogue[field][:])
+
+        result.update(dict.fromkeys(fields))  # Keep the requested column order.
+        paths = {}
         for field in fields:
-            dataset = f"{group}/{field}"
-            pieces = []
-            for chunk in chunks:
-                with h5py.File(chunk, "r") as file:
-                    if dataset in file:
-                        pieces.append(file[dataset][:])
-            if pieces and sum(map(len, pieces)) == count:
-                result[field] = np.concatenate(pieces) if len(pieces) > 1 else pieces[0]
-                continue
-            path = self.root / "groupcat" / group / (field + ".hdf5")
+            parts = pieces.pop(field)
+            if parts and sum(map(len, parts)) == count:
+                result[field] = np.concatenate(parts) if len(parts) > 1 else parts[0]
+            else:
+                paths[field] = self.root / "groupcat" / group / (field + ".hdf5")
+
+        def read_column(field):
             endpoint = f"../../files/groupcat-{self.snap}/?" + urlencode({group: field})
-            result[field] = self._column_file(path, endpoint, dataset, count)
+            return self._column_file(paths[field], endpoint, f"{group}/{field}", count)
+
+        # The archive serves one column per GET. Overlap independent misses,
+        # leaving local reads and single-column requests on the caller's thread.
+        concurrent = not self.offline and sum(not path.is_file() for path in paths.values()) > 1
+        with (ThreadPoolExecutor(max_workers=2) if concurrent else nullcontext()) as pool:
+            values = map(read_column, paths) if pool is None else pool.map(read_column, paths)
+            result.update(zip(paths, values))
         return result[fields[0]] if single else result
 
     def merger_tree(self, number, fields, *, only_mpb=False, optional=False):
@@ -705,18 +1164,13 @@ class ApiSource:
             row = self._object_json("Halo", number, "catalog")
         if row is None:
             row = self._catalog_row("Group", number)
-        result = {k: row[k] for k in fields if row is not None and k in row}
+        result = {k: self._catalog_array(k, row[k])[()] for k in fields if row is not None and k in row}
         for k in fields:
             if k in result:
                 continue
-            column = self.root / "groupcat" / "Group" / (k + ".hdf5")
-            if column.is_file():
-                with h5py.File(column, "r") as file:
-                    result[k] = file["Group"][k][number]
-            else:
-                cell = self._object_value("Halo", number, "catalog:" + k)
-                if cell is not None:
-                    result[k] = np.load(BytesIO(cell), allow_pickle=False)[()]
+            cell = self._cached_catalog_cell("Halo", number, k)
+            if cell is not None:
+                result[k] = cell
         if fetch and set(fields) - result.keys():
             chunk, index = self._object_json("Halo", number, "catalog-location",
                                              lambda: self._catalog_location("Group", number))
@@ -724,18 +1178,31 @@ class ApiSource:
                 for k in fields:
                     if k not in result:
                         result[k] = file["Group"][k][index]
-                        with BytesIO() as stream:
-                            np.save(stream, result[k], allow_pickle=False)
-                            self._store_object_value("Halo", number, "catalog:" + k, stream.getvalue())
+                        self._store_catalog_cell("Halo", number, k, result[k])
         return result
 
+    def _cached_catalog_cell(self, kind, number, name):
+        group = CATALOG[kind]
+        column = self.root / "groupcat" / group / (name + ".hdf5")
+        if column.is_file():
+            with h5py.File(column, "r") as file:
+                return file[group][name][number]
+        cell = self._object_value(kind, number, "catalog:" + name)
+        if cell is not None:
+            return np.load(BytesIO(cell), allow_pickle=False)[()]
+
+    def _store_catalog_cell(self, kind, number, name, value):
+        with BytesIO() as stream:
+            np.save(stream, value, allow_pickle=False)
+            self._store_object_value(kind, number, "catalog:" + name, stream.getvalue())
+
     def history_header(self, snap):
-        local = local_snapshot_header(self.local, int(snap)) if self.local else {}
+        local = local_snapshot_header(self.local, int(snap), expected_run=self.run) if self.local else {}
         header = self.header()
         if "Time" in local:
             return {**header, **local}
         if snap != self.snap:
-            header["Time"] = self._scale_factors()[str(int(snap))]
+            header["Time"] = np.float64(self._scale_factors()[str(int(snap))])
         return header
 
     def history_scales(self, numbers, header):
@@ -744,7 +1211,7 @@ class ApiSource:
         missing = set(map(int, numbers)) - times.keys()
         if self.local:
             for i in missing:
-                local = local_snapshot_header(self.local, i)
+                local = local_snapshot_header(self.local, i, expected_run=self.run)
                 if "Time" in local:
                     times[i] = local["Time"]
         if missing - times.keys():
@@ -799,58 +1266,63 @@ class ApiSource:
                     else:
                         pieces.append(self._column_file(path, filename, dataset, count, raw=True))
                 if pieces:
-                    result.setdefault(fam, {})[name] = np.concatenate(pieces) if len(pieces) > 1 else pieces[0]
+                    result.setdefault(fam, {})[name] = (
+                        concatenate_particle_arrays(name, pieces) if len(pieces) > 1 else pieces[0])
         return result
 
-    def _catalog_file(self, filename, required, download):
-        path = self.root / "groupcat" / filename
-        if path.is_file():
-            return path
-        if not download:
-            return None
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(path) + ".lock"):
-            if not path.exists():
-                with temporary_path(path) as tmp:
-                    self._stream("../../files/" + filename, filename, tmp)
-                    with h5py.File(tmp, "r") as file:
-                        if required not in file:
-                            raise RemoteDataError(f"Missing {required} in {filename}")
-                    os.replace(tmp, path)
-        return path
+    def _catalog_row(self, group, number, download=False, *, field=None):
+        """Read a catalogue cell or row through local files and HDF5 range caches."""
+        kind = "Halo" if group == "Group" else "Subhalo"
 
-    def _catalog_row(self, group, number, download=False):
-        """Resolve one raw FoF/Subfind row. Low IDs often need only chunk zero."""
-        if self.original_illustris and download:
-            chunk, index = self._catalog_location(group, number)
-            with self._raw_groupcat(chunk) as file:
-                return {k: dataset[index].tolist() for k, dataset in file[group].items()}
-        root = self.root / "groupcat"
-        offsets_name = f"offsets.{self.snap}.hdf5"
-        if not (root / offsets_name).is_file():
-            first = self._catalog_file(f"groupcat-{self.snap}.0.hdf5", "Header", download)
-            if first is None:
-                return None
-            with h5py.File(first, "r") as file:
-                if group in file and number < len(file[group][group + "LenType"]):
-                    return {k: v[number] for k, v in file[group].items()}
-        if self.original_illustris:
-            chunk, row = self._catalog_location(group, number)
-        else:
-            offsets = self._catalog_file(offsets_name, "FileOffsets/" + group, download)
-            if offsets is None:
-                return None
-            with h5py.File(offsets, "r") as file:
-                starts = file["FileOffsets/" + group][:]
-                chunk = int(np.searchsorted(starts, number, side="right")) - 1
-                row = number - int(starts[chunk])
-        path = self._catalog_file(f"groupcat-{self.snap}.{chunk}.hdf5", "Header", download)
-        if path is None:
+        def read_chunk(chunk, row, *, cache_only):
+            with self._groupcat_with_ranges(chunk, cache_only=cache_only) as (file, stream):
+                columns = file.get(group)
+                if columns is None:
+                    return None
+                if field is not None and field in columns:
+                    dataset = columns[field]
+                    return {field: dataset[row]} if row < len(dataset) else None
+                if row >= len(columns[group + "LenType"]):
+                    return None
+                if field is not None:
+                    return {}
+                datasets = (stream.catalog_row_datasets(columns, row)
+                            if stream is not None and not cache_only else columns.items())
+                return {name: dataset[row] for name, dataset in datasets}
+
+        if not download:
+            saved = self._object_value(kind, number, "catalog-hdf5")
+            if saved is not None:
+                with h5py.File(BytesIO(saved), "r") as record:
+                    if field is not None:
+                        return {field: record[field][()]} if field in record else {}
+                    return {name: dataset[()] for name, dataset in record.items()}
+            # A legacy cache can contain the complete first chunk without the offsets file.
+            try:
+                value = read_chunk(0, number, cache_only=True)
+                if value is not None:
+                    return value
+            except _RangeCacheMiss:
+                pass
+        try:
+            chunk, row = self._catalog_location(group, number, cache_only=not download)
+            value = read_chunk(chunk, row, cache_only=not download)
+        except _RangeCacheMiss:
             return None
-        with h5py.File(path, "r") as file:
-            if group not in file or row >= len(file[group][group + "LenType"]):
-                raise RemoteDataError(f"No {group} {number} in {self.run} snapshot {self.snap}")
-            return {k: v[row] for k, v in file[group].items()}
+        if value is None:
+            raise RemoteDataError(f"No {group} {number} in {self.run} snapshot {self.snap}")
+        if download and self.local:
+            # Either the offsets or the target shard may have come from the mirror.
+            # Keep the typed row replayable even if the mirror is absent next time.
+            if field is None:
+                with BytesIO() as stream:
+                    with h5py.File(stream, "w") as record:
+                        for name, cell in value.items():
+                            record[name] = cell
+                    self._store_object_value(kind, number, "catalog-hdf5", stream.getvalue())
+            elif field in value:
+                self._store_catalog_cell(kind, number, field, value[field])
+        return value
 
     def _local_catalog(self, kind, number):
         if self.local:
@@ -860,49 +1332,92 @@ class ApiSource:
             except (FileNotFoundError, KeyError):
                 pass
 
-    def _remember_catalog(self, kind, number, value):
+    def _describe_catalog_fields(self, kind, names):
         fields = self.catalog_fields[kind.lower()]
-        for name in value.keys() - fields.keys():
+        for name in set(names) - fields.keys():
             fields[name] = parameter_all_Description("groupcatalogs", kind.lower(), name)
+
+    def _remember_catalog(self, kind, number, value):
+        self._describe_catalog_fields(kind, value)
         self._catalogs[kind, number] = value
         return value
 
-    def catalog(self, kind, number):
+    def _download_catalog(self, kind, number, field):
+        group = CATALOG[kind]
+        obj = f"{kind.lower()}s/{number}"
+        self._check_online(f"{obj} / {field or 'catalog'}")
+        endpoint = obj + "/info.json"
+
+        def extract(meta):
+            data = meta.get(group)
+            if data is None:
+                data = {k: v for k, v in meta.items() if k.startswith(group)
+                        or (self.run == "TNG-Cluster" and k in ("TracerLengthType", "TracerOffsetType"))}
+            counts = np.asarray(data[group + "LenType"])
+            if counts.shape != (6,) or counts.dtype.kind not in "iu" or np.any(counts < 0):
+                raise RemoteDataError(f"Invalid {group}LenType for {obj}")
+            return data
+
+        # Once the gateway has failed for this object, a second field can go
+        # straight to the same shard. The JSON service can still rescue a failed range.
+        key = kind, number
+        sources = ("hdf5", "json") if key in self._archive_catalogs else ("json", "hdf5")
+        errors = {}
+        for source in sources:
+            if source == "json":
+                try:
+                    row = self._object_json(kind, number, "catalog", lambda: self._fetch_json(
+                        endpoint, endpoint, extract, catalog_fallback=True))
+                except RemoteDataError as exc:
+                    if not _catalog_fallback_error(exc.__cause__) and "hdf5" not in errors:
+                        raise
+                    errors[source] = exc
+                else:
+                    self._archive_catalogs.discard(key)
+                    return row, True
+            else:
+                try:
+                    row = self._catalog_row(group, int(number), download=True, field=field)
+                except (RemoteDataError, OSError, KeyError, ValueError) as exc:
+                    cause = exc.__cause__
+                    if (not errors and isinstance(cause, HTTPError) and cause.code in (401, 403, 429)
+                            and not _download_forbidden(cause)):
+                        raise
+                    errors[source] = exc
+                else:
+                    if field is not None:
+                        self._archive_catalogs.add(key)
+                    return row, field is None
+        raise RemoteDataError(
+            f"{self.run} snapshot {self.snap} {endpoint} failed ({errors['json']}). "
+            f"HDF5 catalogue fallback failed ({errors['hdf5']})."
+        ) from errors["hdf5"]
+
+    def catalog(self, kind, number, *, field=None):
+        """Return the full native catalogue row, or one native value when a field is given."""
         if kind not in CATALOG or not isinstance(number, (int, np.integer)) or number < 0:
             raise ValueError("Expected Halo or Subhalo and a non-negative integer ID")
+        if field is not None and (not isinstance(field, str) or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", field)):
+            raise KeyError(field)
         if (kind, number) in self._catalogs:
-            return self._catalogs[kind, number]
-        group = CATALOG[kind]
+            row = self._catalogs[kind, number]
+            return row if field is None else row[field]
+        complete = True
         value = self._local_catalog(kind, number)
         if value is None:
-            obj = f"{kind.lower()}s/{number}"
-
-            def extract(meta):
-                data = meta.get(group)
-                if data is None:
-                    data = {k: v for k, v in meta.items() if k.startswith(group)}
-                counts = np.asarray(data[group + "LenType"])
-                if counts.shape != (6,) or counts.dtype.kind not in "iu" or np.any(counts < 0):
-                    raise RemoteDataError(f"Invalid {group}LenType for {obj}")
-                return data
-
             value = self._object_json(kind, number, "catalog")
-            if value is None:
-                value = self._catalog_row(group, int(number))
-            if value is None:
-                try:
-                    value = self._object_json(kind, number, "catalog",
-                                              lambda: self._fetch_json(obj + "/info.json", obj, extract))
-                except (RemoteDataError, TimeoutError) as exc:
-                    cause = exc.__cause__
-                    timed_out = isinstance(exc, TimeoutError) or isinstance(getattr(cause, "reason", None), TimeoutError)
-                    server_error = isinstance(cause, HTTPError) and cause.code in (500, 502, 503, 504)
-                    if not (timed_out or server_error or _download_forbidden(cause)):
-                        raise
-                    value = self._catalog_row(group, int(number), download=True)
-                    if self.original_illustris:
-                        self._store_object_value(kind, number, "catalog", json.dumps(value))
-        return self._remember_catalog(kind, number, value)
+        if value is None and field is not None:
+            cell = self._cached_catalog_cell(kind, number, field)
+            if cell is not None:
+                return cell
+        if value is None:
+            value = self._catalog_row(CATALOG[kind], int(number), field=field)
+            complete = field is None
+        if value is None:
+            value, complete = self._download_catalog(kind, number, field)
+        if complete:
+            self._remember_catalog(kind, number, value)
+        return value if field is None else value[field]
 
     def particle_counts(self, kind, number):
         """Use the database-backed subhalo summary when only the layout is needed."""
@@ -942,15 +1457,13 @@ class ApiSource:
                                              lambda: self._fetch_json(obj + "/", obj + " counts", extract))
                 except RemoteDataError as exc:
                     cause = exc.__cause__
-                    timed_out = isinstance(getattr(cause, "reason", None), TimeoutError)
-                    unavailable = isinstance(cause, HTTPError) and cause.code in (404, 500, 502, 503, 504)
-                    if not (timed_out or unavailable):
+                    if not (_catalog_fallback_error(cause) or isinstance(cause, HTTPError) and cause.code == 404):
                         raise
                 except (KeyError, ValueError, TimeoutError):
                     pass  # Use the full catalog when the summary is unavailable.
         return self.catalog(kind, number)[CATALOG[kind] + "LenType"]
 
-    def _particle_offsets(self, kind, number):
+    def _particle_offsets(self, kind, number, progress=None):
         group = CATALOG[kind]
 
         def locate():
@@ -966,93 +1479,307 @@ class ApiSource:
                                                  json.dumps(self._particle_files.tolist()))
                     return subset["offsetType"].tolist()
             if self.original_illustris:
-                chunk, row = self._catalog_location(group, number)
-                with self._raw_groupcat(chunk) as file:
+                chunk, row = self._catalog_location(group, number, progress)
+                with self._raw_groupcat(chunk, progress) as file:
                     return file[f"Offsets/{group}_SnapByType"][row].tolist()
-            with self._offset_file() as file:
+            with self._offset_file(progress) as file:
                 return file[f"{group}/SnapByType"][number].tolist()
 
-        return self._object_json(kind, number, "particle-offsets", locate)
+        return self._object_json(kind, number, "particle-offsets",
+                                 lambda: self._particle_type_vector(locate(), "offsets").tolist())
 
-    def _particle_file_starts(self):
+    @staticmethod
+    def _particle_type_vector(values, label):
+        values = np.asarray(values)
+        if values.shape != (6,) or values.dtype.kind not in "iu" or np.any(values < 0):
+            raise RemoteDataError(f"Invalid snapshot particle {label}")
+        return values
+
+    @staticmethod
+    def _offset_service_unavailable(exc):
+        cause = exc.__cause__ or exc
+        return (_transient_get_error(cause) or _download_forbidden(cause)
+                or isinstance(cause, HTTPError) and cause.code == 404)
+
+    def _valid_particle_field(self, key, shape, dtype):
+        fam, name = key
+        if not shape or dtype.kind not in "biufc":
+            return False
+        if name not in self.fields[fam]:
+            # User-configured extra numeric datasets can have their own schema.
+            return all(size > 0 for size in shape[1:])
+        width = _PARTICLE_COMPONENTS.get(name)
+        if name == "GFM_Metals":
+            width = 9 if self.original_illustris else 10
+        kinds = "iu" if name in _PARTICLE_INTEGERS else "f"
+        return shape[1:] == ((width,) if width else ()) and dtype.kind in kinds
+
+    def _has_particle_shards(self):
+        # A partial mirror can start at any chunk. Even one legacy range can
+        # supply a subset of a column once the object offsets are known.
+        if self.local:
+            directory = Path(self.local) / f"snapdir_{self.snap:03d}"
+            if any(directory.glob(f"snap*_{self.snap:03d}.*.hdf5")):
+                return True
+        return (any((self.root / "particles").glob(f"snapshot-{self.snap}.*.hdf5.sqlite3"))
+                or any((self.root / "groupcat").glob(f"snapshot-{self.snap}.*.hdf5")))
+
+    def _particle_file_starts(self, progress=None):
         if self._particle_files is None:
             def read():
                 if self.original_illustris:
-                    with self._raw_groupcat(0) as file:
+                    with self._raw_groupcat(0, progress) as file:
                         return file["Header"].attrs["FileOffsets_Snap"].tolist()
-                with self._offset_file() as file:
+                with self._offset_file(progress) as file:
                     return file["FileOffsets/SnapByType"][:].T.tolist()
 
             self._particle_files = np.asarray(self._object_json("Snapshot", 0, "particle-files", read))
         return self._particle_files
 
-    def _snapshot_particle_chunk(self, chunk, selections):
-        data = {fam: {} for fam in selections}
+    def _cached_particle_chunk(self, chunk, selections, stack, progress):
+        datasets = {}
 
-        def read(file):
-            for fam, (rows, fields) in selections.items():
-                for name in sorted(fields - data[fam].keys()):
-                    dataset = f"PartType{PART_TYPE[fam]}/{name}"
-                    if dataset in file:
-                        values = file[dataset][rows]
-                        if len(values) != rows.stop - rows.start:
-                            raise RemoteDataError(f"Incomplete snapshot data for {fam}.{name} in chunk {chunk}")
-                        data[fam][name] = values
+        def collect(file, fields):
+            for key in sorted(fields):
+                fam, name = key
+                path = f"PartType{PART_TYPE[fam]}/{name}"
+                try:
+                    if path in file:
+                        dataset = file[path]
+                        if (isinstance(dataset, h5py.Dataset)
+                                and self._valid_particle_field(key, dataset.shape, dataset.dtype)
+                                and len(dataset) >= max(rows.stop for _, rows in selections[key])):
+                            datasets[key] = dataset
+                except (OSError, RemoteDataError):
+                    continue
 
         local = snapPath(self.local, self.snap, chunk) if self.local else None
         if local and Path(local).is_file():
-            with h5py.File(local, "r") as file:
-                read(file)
-        if any(fields - data[fam].keys() for fam, (_, fields) in selections.items()):
-            filename = f"snapshot-{self.snap}.{chunk}.hdf5"
-            with self._raw_file(filename, particles=True) as file:
-                read(file)
-            for fam, (_, fields) in selections.items():
-                missing = fields - data[fam].keys()
-                if missing:
-                    raise RemoteDataError(f"Missing snapshot fields for {fam} in {filename}: {', '.join(sorted(missing))}")
-        return data
+            try:
+                collect(stack.enter_context(h5py.File(local, "r")), selections.keys())
+            except OSError:
+                pass
+        cached_fields = selections.keys() - datasets.keys()
+        if not cached_fields:
+            return datasets
+
+        filename = f"snapshot-{self.snap}.{chunk}.hdf5"
+        try:
+            file, stream = stack.enter_context(self._file_with_ranges(filename, particles=True, progress=progress))
+        except (OSError, RemoteDataError):
+            return datasets
+        collect(file, cached_fields)
+        if stream is not None:
+            for key in cached_fields & datasets.keys():
+                dataset = datasets[key]
+                offset = dataset.id.get_offset()
+                row_size = dataset.dtype.itemsize * int(np.prod(dataset.shape[1:]))
+                if offset is not None and row_size and not dataset.dtype.hasobject:
+                    selections[key] = [part for first, rows in selections[key]
+                                       for part in stream.cached_row_slices(offset, row_size, first, rows)]
+        return datasets
+
+    def _read_cached_particle_chunks(self, selections, progress):
+        pieces = {key: [] for key in selections}
+        chunks = {}
+        file_starts = self._particle_file_starts(progress)
+        if (file_starts.ndim != 2 or file_starts.shape[0] != 6 or not file_starts.shape[1]
+                or file_starts.dtype.kind not in "iu" or np.any(file_starts[:, 0] != 0)
+                or np.any(file_starts[:, 1:] < file_starts[:, :-1])):
+            raise RemoteDataError("Invalid snapshot file offsets")
+        for key, intervals in selections.items():
+            starts = file_starts[PART_TYPE[key[0]]]
+            for start, stop in intervals:
+                first = int(np.searchsorted(starts, start, side="right")) - 1
+                last = int(np.searchsorted(starts, stop, side="left"))
+                if first < 0 or last <= first:
+                    raise RemoteDataError(f"Invalid particle interval for {key[0]}")
+                for chunk in range(first, last):
+                    end = min(stop, int(starts[chunk+1])) if chunk+1 < len(starts) else stop
+                    begin = int(starts[chunk])
+                    lo = max(begin, start)
+                    if end > lo:
+                        rows = slice(lo - begin, end - begin)
+                        chunks.setdefault(chunk, {}).setdefault(key, []).append((lo, rows))
+
+        for chunk, slices in sorted(chunks.items()):
+            with ExitStack() as stack:
+                datasets = self._cached_particle_chunk(chunk, slices, stack, progress)
+                for key, dataset in datasets.items():
+                    for first, rows in slices[key]:
+                        try:
+                            values = dataset[rows]
+                        except (OSError, RemoteDataError):
+                            continue
+                        pieces[key].append((first, values))
+        return pieces
+
+    @staticmethod
+    def _missing_particle_rows(bounds, pieces):
+        pending = {}
+        for key, (start, stop) in bounds.items():
+            covered = sorted((first, first + len(values)) for first, values in pieces[key])
+            gaps = list(missing_rows(start, stop, covered))
+            if gaps:
+                pending[key] = gaps
+        return pending
+
+    @staticmethod
+    def _assemble_particle_rows(key, bounds, pieces):
+        next_row, stop = bounds
+        arrays = []
+        for first, values in sorted(pieces, key=lambda part: part[0]):
+            if first != next_row:
+                raise RemoteDataError(f"Incomplete rows for {key[0]}.{key[1]}")
+            next_row += len(values)
+            arrays.append(values)
+        if next_row != stop:
+            raise RemoteDataError(f"Wrong particle count for {key[0]}.{key[1]}")
+        if len(arrays) == 1:
+            return arrays[0]
+        dtype = arrays[0].dtype
+        if all(array.dtype == dtype for array in arrays):
+            result = np.empty((stop - bounds[0], *arrays[0].shape[1:]), dtype=dtype)
+            return np.concatenate(arrays, out=result)
+        return concatenate_particle_arrays(key[1], arrays)
+
+    def _download_particle_cutout(self, obj, keys, path, progress):
+        fields = {}
+        for fam, name in keys:
+            fields.setdefault(fam, set()).add(name)
+        query = urlencode({API_TYPE[fam]: ",".join(sorted(names)) for fam, names in fields.items()})
+        self._stream(obj + "/cutout.hdf5?" + query, obj, path, progress=progress)
+
+    def _cutout_rows(self, path, bounds, missing, progress):
+        """Validate full object extents and take only the rows still required."""
+        progress.phase("Validating cutout")
+        result = {}
+        with h5py.File(path, "r") as file:
+            for key, intervals in missing.items():
+                fam, name = key
+                start, stop = bounds[key]
+                dataset = file.get(f"PartType{PART_TYPE[fam]}/{name}")
+                if (not isinstance(dataset, h5py.Dataset)
+                        or not self._valid_particle_field(key, dataset.shape, dataset.dtype)
+                        or dataset.shape[0] != stop - start):
+                    raise RemoteDataError(f"Invalid cutout data for {fam}.{name}")
+                result[key] = [(lo, dataset[lo-start:hi-start]) for lo, hi in intervals]
+        return result
+
+    @staticmethod
+    def _add_particle_rows(target, rows):
+        for key, spans in rows.items():
+            target.setdefault(key, []).extend(spans)
+
+    def _load_particle_rows(self, obj, bounds, cache, lock, stack, progress, prefetched):
+        damaged = set()
+        updates = {}
+        pieces = {key: [] for key in bounds}
+        if cache is not None and prefetched is None:
+            progress.phase("Reading particle cache")
+            pieces = cache.read(bounds, damaged=damaged)
+        missing = self._missing_particle_rows(bounds, pieces)
+        if missing and cache is not None and prefetched is None and self._has_particle_shards():
+            progress.phase("Reading local snapshot rows")
+            try:
+                local = self._read_cached_particle_chunks(missing, progress)
+            except (RemoteDataError, OSError, HTTPException) as exc:
+                if not self._offset_service_unavailable(exc):
+                    raise
+                local = {}  # A cutout can still supply the missing rows.
+            self._add_particle_rows(pieces, local)
+            for key, start, stop in damaged:
+                for first, values in local.get(key, ()):
+                    lo, hi = max(first, start), min(first + len(values), stop)
+                    if lo < hi:
+                        updates.setdefault(key, []).append((lo, values[lo-first:hi-first]))
+            missing = self._missing_particle_rows(bounds, pieces)
+
+        if missing and self.offline:
+            details = ", ".join(f"{fam}.{name} rows " + ", ".join(f"[{lo}, {hi})" for lo, hi in intervals)
+                                for (fam, name), intervals in missing.items())
+            self._check_online(f"{obj} / {details}")
+        if missing and not lock.is_locked:
+            progress.phase("Waiting for particle cache")
+            self.root.mkdir(parents=True, exist_ok=True)
+            stack.enter_context(lock)
+            if cache is not None:
+                # Another reader may have filled these gaps. Keep the valid
+                # arrays we already decoded; only query outstanding intervals.
+                self._add_particle_rows(pieces, cache.read_intervals(missing, damaged=damaged))
+                missing = self._missing_particle_rows(bounds, pieces)
+        if missing:
+            if prefetched is None:
+                path = stack.enter_context(temporary_path(self.root / "cutout.hdf5"))
+                self._download_particle_cutout(obj, missing, path, progress)
+            else:
+                path, transfer = prefetched
+                transfer.result()
+            rows = self._cutout_rows(path, bounds, missing, progress)
+            self._add_particle_rows(updates, rows)
+            self._add_particle_rows(pieces, rows)
+        if cache is not None and updates:
+            progress.phase("Writing particle cache")
+            cache.store(updates, damaged=damaged)
+        return pieces
+
+    def _catalog_array(self, name, value, *, with_units=False):
+        try:
+            unit = groupcat_units(name)
+        except KeyError:
+            unit = None
+        if isinstance(value, (np.generic, np.ndarray)):
+            array = np.array(value, copy=True)  # Preserve native HDF5 dtypes, including custom columns.
+        else:
+            array = _json_catalog_array(self.run, name, value, unit is not None)
+        return SimArray(array, unit) if with_units and unit is not None else array
 
     def catalog_arrays(self, kind, number):
-        result = {}
-        for name, value in self.catalog(kind, number).items():
-            array = np.array(value, copy=True)
-            try:
-                unit = groupcat_units(name)
-            except KeyError:
-                # Preserve supplementary catalog columns whose units are unknown.
-                result[name] = array
-            else:
-                result[name] = SimArray(array, unit)
-        return result
+        return {name: self._catalog_array(name, value, with_units=True)
+                for name, value in self.catalog(kind, number).items()}
+
+    def catalog_array(self, kind, number, field):
+        if field is None:
+            raise KeyError(field)
+        value = self.catalog(kind, number, field=field)
+        self._describe_catalog_fields(kind, [field])
+        return self._catalog_array(field, value, with_units=True)
 
     def _progress(self, description, **options):
         disable = self.progress is False
         if self.progress == "auto" and not _IN_NOTEBOOK:
             disable = None  # Let tqdm detect interactive terminals.
-        return tqdm(desc=description, disable=disable, **options)
+        bar = tqdm(desc=description, disable=disable, **options)
+        if options.get("unit") == "B" and options.get("total") is None:
+            _set_byte_total(bar, None)
+        return bar
 
-    def _stream(self, endpoint, resource, path):
-        with self._progress(f"Waiting for {resource}", total=None, unit="B", unit_scale=True) as bar:
-            with self._open(endpoint, resource) as response, path.open("wb") as stream:
-                length = response.headers.get("Content-Length")
-                total = int(length) if length else None
-                bar.total = total
-                bar.set_description_str(resource)
-                while True:
-                    block = response.read(1024 * 1024)
-                    if not block:
-                        break
-                    stream.write(block)
-                    bar.update(len(block))
-            if total is not None and path.stat().st_size != total:
-                raise RemoteDataError(f"Incomplete download for {resource}")
+    def _stream(self, endpoint, resource, path, *, progress=None):
+        if progress is not None:
+            progress.mark_transport("Cutout")
+        with (nullcontext(progress) if progress is not None else
+              self._progress(f"Waiting for {resource}", total=None, unit="B", unit_scale=True)) as bar:
+            def save(response):
+                total = _response_length(response, resource)
+                if progress is None:
+                    _set_byte_total(bar, None if total is None else bar.n + total)
+                    bar.set_description_str(resource)
+                else:
+                    progress.phase("Downloading cutout")
+                # A retry starts a fresh body in the same unpublished temporary file.
+                with path.open("wb") as stream:
+                    _copy_response(response, stream.write, bar, total, f"Incomplete download for {resource}")
+
+            self._open(endpoint, resource, read=save, progress=progress)
 
     def particles(self, kind, number, fields, *, counts=None):
         if kind == "Zoom":
             return self._zoom_particles(number, fields)
+        if kind not in CATALOG or not isinstance(number, (int, np.integer)) or number < 0:
+            raise ValueError("Expected Halo or Subhalo and a non-negative integer ID")
         if counts is None:
             counts = self.particle_counts(kind, number)
+        counts = self._particle_type_vector(counts, "counts")
         request = {fam: set(self._field_names(names)) for fam, names in fields.items()
                    if names and counts[PART_TYPE[fam]]}
         if not request:
@@ -1061,42 +1788,54 @@ class ApiSource:
         obj = f"{kind.lower()}s/{number}"
         details = ", ".join(f"{fam}.{name}" for fam, names in request.items() for name in sorted(names))
         try:
-            offsets = self._particle_offsets(kind, number)
-            file_starts = self._particle_file_starts()
-            if len(offsets) != 6 or file_starts.ndim != 2 or file_starts.shape[0] != 6:
-                raise RemoteDataError("Invalid snapshot offsets")
-            chunks = {}
-            for fam, names in request.items():
-                part_type = PART_TYPE[fam]
-                start = int(offsets[part_type])
-                stop = start + int(counts[part_type])
-                starts = file_starts[part_type]
-                first = int(np.searchsorted(starts, start, side="right")) - 1
-                last = int(np.searchsorted(starts, stop, side="left"))
-                if first < 0 or last <= first:
-                    raise RemoteDataError(f"Invalid particle interval for {fam}")
-                for chunk in range(first, last):
-                    end = min(stop, starts[chunk + 1]) if chunk + 1 < len(starts) else stop
-                    begin = int(starts[chunk])
-                    if end > max(begin, start):
-                        rows = slice(max(0, start - begin), int(end - begin))
-                        chunks.setdefault(chunk, {})[fam] = rows, names
-
-            pieces = {fam: {name: [] for name in names} for fam, names in request.items()}
-            for chunk, selections in sorted(chunks.items()):
-                for fam, values in self._snapshot_particle_chunk(chunk, selections).items():
-                    for name, array in values.items():
-                        pieces[fam][name].append(array)
-
-            result = {}
-            for fam, values in pieces.items():
-                result[fam] = {}
-                for name, arrays in values.items():
-                    if sum(map(len, arrays)) != counts[PART_TYPE[fam]]:
-                        raise RemoteDataError(f"Wrong particle count for {fam}.{name}")
-                    result[fam][name] = np.concatenate(arrays) if len(arrays) > 1 else arrays[0]
-            return result
-        except (RemoteDataError, OSError, HTTPException, KeyError, IndexError) as exc:
+            with ExitStack() as stack:
+                label = f"Loading {self.run}/{self.snap:03d}/{kind} {number} / {details}"
+                progress = _ParticleProgress(self, stack, label)
+                progress.phase("Checking particle offsets and cache")
+                cache = ParticleRowCache(self.root / "particle-rows.sqlite3", self._valid_particle_field)
+                lengths = {(fam, name): int(counts[PART_TYPE[fam]]) for fam, names in request.items()
+                           for name in names}
+                slot = (2 * int(number) + (kind == "Subhalo")) % 64
+                lock = FileLock(str(self.root / f"particle-cutout-{slot}.lock"))
+                offsets = self._object_json(kind, number, "particle-offsets")
+                prefetched = None
+                if offsets is None and not self.offline and not self._has_particle_shards():
+                    self.root.mkdir(parents=True, exist_ok=True)
+                    stack.enter_context(lock)
+                    offsets = self._object_json(kind, number, "particle-offsets")
+                    if offsets is None and not cache.has_fields(lengths):
+                        # No local source can satisfy even one requested field.
+                        # Transfer to a private file while the offsets are read.
+                        path = stack.enter_context(temporary_path(self.root / "cutout.hdf5"))
+                        pool = stack.enter_context(ThreadPoolExecutor(max_workers=1))
+                        prefetched = path, pool.submit(self._download_particle_cutout, obj, lengths, path, progress)
+                if offsets is None:
+                    try:
+                        offsets = self._particle_offsets(kind, number, progress)
+                    except (RemoteDataError, OSError, HTTPException) as exc:
+                        if self.offline:
+                            rows = ", ".join(f"{fam}.{name} object rows [0, {count})"
+                                             for (fam, name), count in lengths.items())
+                            raise RemoteDataError(f"Cannot locate {rows}: {exc}") from exc
+                        if not self._offset_service_unavailable(exc):
+                            raise
+                        # Full cutouts have their own object-relative row order.
+                        # Without official offsets, no rows may enter the snapshot cache.
+                        cache = None
+                        offsets = [0] * 6
+                offsets = self._particle_type_vector(offsets, "offsets")
+                bounds = {}
+                for key, length in lengths.items():
+                    start = int(offsets[PART_TYPE[key[0]]])
+                    bounds[key] = (start, start + length)
+                pieces = self._load_particle_rows(obj, bounds, cache, lock, stack, progress, prefetched)
+                progress.phase("Assembling particle arrays")
+                result = {fam: {} for fam in request}
+                for (fam, name), interval in bounds.items():
+                    result[fam][name] = self._assemble_particle_rows((fam, name), interval, pieces[fam, name])
+                progress.complete()
+                return result
+        except (RemoteDataError, OSError, HTTPException, KeyError, IndexError, ValueError) as exc:
             # pynbody treats OSError as an invitation to derive an array.
             raise RemoteDataError(f"Could not read {obj} / {details}: {exc}") from exc
 
@@ -1160,6 +1899,8 @@ class ApiObjectContext(ApiLazyContext):
         ctx = cls(owner, source)
         ctx.kind, ctx.number = kind, int(number)
         ctx.counts = counts
+        ctx._batch_fields = None
+        ctx._batch_lock = getattr(owner, "_get_array_lock", None) or RLock()
         for names in ctx.names.values():
             names.update(HaloID="HaloID", SubhaloID="SubhaloID")
             if kind == "Zoom":
@@ -1172,8 +1913,30 @@ class ApiObjectContext(ApiLazyContext):
         families = self.owner.families() if fam is None else [get_family(getattr(fam, "name", fam))]
         if not families or any(name not in self.names[f.name] for f in families):
             raise OSError(f"No particle field {name} for this selection")
-        self.read_fields({f.name: [self.names[f.name][name]] for f in families
-                          if name not in self.owner[f].keys()})
+        with self._batch_lock:
+            self.read_fields(self._batch_fields or self._missing_fields((name,), families))
+
+    def _missing_fields(self, names, families):
+        fields = {}
+        for family in families:
+            available = set(self.owner[family].keys())
+            missing = [self.names[family.name][name] for name in names if name not in available]
+            if missing:
+                fields[family.name] = missing
+        return fields
+
+    def prefetch_fields(self, names, families):
+        with self._batch_lock:
+            fields = self._missing_fields(names, families)
+            if fields:
+                # One ordinary pynbody lookup installs the whole batch. Its normal
+                # postprocessing applies units and transformations to every new array.
+                fam, keys = next(iter(fields.items()))
+                self._batch_fields = fields
+                try:
+                    self.owner[get_family(fam)][snapshot_pa_name(keys[0])]
+                finally:
+                    self._batch_fields = None
 
     def read_fields(self, fields):
         request = {}

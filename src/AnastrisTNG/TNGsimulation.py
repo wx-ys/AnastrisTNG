@@ -2,7 +2,6 @@
 Load illustrisTNG data and process it.
 '''
 
-from functools import reduce
 from copy import deepcopy
 
 from pynbody.snapshot import SimSnap, new
@@ -20,16 +19,20 @@ from AnastrisTNG.TNGsnapshot import *
 from AnastrisTNG.TNGunits import *
 from AnastrisTNG.TNGmergertree import *
 from AnastrisTNG.Anatools import ang_mom
+from AnastrisTNG.TNGload import _TNGSimSnap, particle_id_dtype
 from AnastrisTNG.TNGsubhalo import Subhalos, Subhalo
 from AnastrisTNG.TNGhalo import Halos, Halo
-from AnastrisTNG.TNGgroupcat import loadSingle, halosproperty, subhalosproperty, get_eps_Mdm, get_parttype,simsnap_cover, simsnap_merge, local_snapshot_header
+from AnastrisTNG.TNGgroupcat import (
+    get_eps_Mdm, get_parttype, haloproperties, halosproperty, loadSingle, local_snapshot_header,
+    simsnap_cover, simsnap_merge, subhaloproperties, subhalosproperty,
+)
 from AnastrisTNG.pytreegrav import Accel, Potential, PotentialTarget, AccelTarget
 
 
 _BASE_FIELDS = ("Coordinates", "Velocities", "Masses", "ParticleIDs")
 
 
-class Snapshot(SimSnap):
+class Snapshot(_TNGSimSnap):
     """
     This class represents a snapshot of simulated cosmological data, containing information about
     the snapshot itself, as well as data on halos and subhalos.
@@ -80,7 +83,7 @@ class Snapshot(SimSnap):
             The snapshot number corresponding to the desired snapshot in the simulation series.
         """
         self._source = _source
-        SimSnap.__init__(self)
+        super().__init__()
         self._num_particles = 0
         self._filename = "<created>"
         self._create_arrays(["pos", "vel"], 3)
@@ -221,65 +224,11 @@ class Snapshot(SimSnap):
 
         return parameter_all_Description(table, contents, parameters)
 
-    def physical_units(self, persistent: bool = False):
-        """
-        Convert the units of the simulation arrays and properties to physical units.
-
-        This method adjusts the units of the simulation data arrays and properties based on the
-        base units of the simulation. It ensures that the data is consistent with physical units
-        (e.g., kpc, Msol, km/s) and converts the data if necessary.
-
-        Parameters:
-        -----------
-        persistent : bool, optional
-            If True, the conversion to physical units will be persistent, meaning that
-            future calculations and accesses will use these units by default. If False,
-            the conversion is temporary (default is False).
-        """
-
-        dims = self.properties['baseunits'] + [units.a, units.h]
-        urc = len(dims) - 2
-        all = list(self._arrays.values())
-        for x in self._family_arrays:
-            if x in self.properties.get('staunit', []):
-                continue
-            else:
-                all += list(self._family_arrays[x].values())
-
-        for ar in all:
-            if ar.units is not units.no_unit:
-                self._autoconvert_array_unit(ar.ancestor, dims, urc)
-
-        for k in list(self.properties):
-            v = self.properties[k]
-            if isinstance(v, units.UnitBase):
-                try:
-                    new_unit = v.dimensional_project(dims)
-                except units.UnitsException:
-                    continue
-                new_unit = reduce(
-                    lambda x, y: x * y, [a**b for a, b in zip(dims, new_unit[:])]
-                )
-                new_unit *= v.ratio(new_unit, **self.conversion_context())
-                self.properties[k] = new_unit
-            if isinstance(v, SimArray):
-                if (v.units is not None) and (v.units is not units.no_unit):
-                    try:
-                        d = v.units.dimensional_project(dims)
-                    except units.UnitsException:
-                        return
-                    new_unit = reduce(
-                        lambda x, y: x * y, [a**b for a, b in zip(dims, d[:urc])]
-                    )
-                    if new_unit != v.units:
-                        self.properties[k].convert_units(new_unit)
-
+    def physical_units(self, persistent: bool = True):
+        """Convert particles with pynbody and update the loaded TNG catalogues."""
+        super().physical_units(*self.properties['baseunits'], persistent=persistent)
         self.subhalos.physical_units()
         self.halos.physical_units()
-        if persistent:
-            self._autoconvert = dims
-        else:
-            self._autoconvert = None
         self._canloadPT = False
 
     def galaxy_evolution(
@@ -392,6 +341,24 @@ class Snapshot(SimSnap):
         for i in self.halos.keys():
             self.__GC_loaded['Halo'].add(int(i))
 
+    def _catalog_for_merge(self, kind, number):
+        total = self.properties["Halos_total" if kind == "Halo" else "Subhalos_total"]
+        if not 0 <= number < total:
+            raise ValueError(f"No {kind} {number} in snapshot {self.snapshot}")
+        if self._source is not None:
+            return self._source.catalog_arrays(kind, number)
+        read = haloproperties if kind == "Halo" else subhaloproperties
+        return read(self.properties["filedir"], self.snapshot, number)
+
+    def _commit_particle_merge(self, merged):
+        simsnap_cover(self, merged)
+        ind = np.empty(len(self), dtype='int8')
+        for index, family in enumerate(self.families()):
+            ind[self._get_family_slice(family)] = index
+        self._family_index_cached = ind
+        self.subhalos.update()
+        self.halos.update()
+
     def load_halo(self, haloID: int):
         """
         Load a specific halo's particles and group catalog (GC) data into the snapshot.
@@ -403,6 +370,10 @@ class Snapshot(SimSnap):
             print(haloID, ' was already loaded into this Snapshot')
             return
         if self._canloadPT:
+            catalog = self._catalog_for_merge("Halo", haloID)
+            first_sub, n_sub = int(catalog["GroupFirstSub"]), int(catalog["GroupNsubs"])
+            if n_sub < 0 or (n_sub and not 0 <= first_sub < first_sub + n_sub <= self.properties["Subhalos_total"]):
+                raise ValueError(f"Invalid subhalo membership for Halo {haloID}")
             self.load_particle_para['particle_field'] = self.load_particle_para[
                 'particle_field'
             ].lower()
@@ -434,24 +405,11 @@ class Snapshot(SimSnap):
                 fmerge = simsnap_merge(f1, f)
             else:
                 fmerge = simsnap_merge(self, f)
-            simsnap_cover(self, fmerge)
-            ind = np.empty((len(self),), dtype='int8')
-            for i, f in enumerate(self.ancestor.families()):
-                ind[self._get_family_slice(f)] = i
-
-            self._family_index_cached = ind
-            self.subhalos.update()
-            self.halos.update()
-            self.halos[haloID].load_GC()
+            self._commit_particle_merge(fmerge)
+            self.halos._record_loaded(haloID, catalog)
             self.__PT_loaded['Halo'].add(haloID)
             self.__GC_loaded['Halo'].add(haloID)
-            if self.halos[haloID].GC['GroupFirstSub'] != -1:
-                for i in range(
-                    self.halos[haloID].GC['GroupFirstSub'],
-                    self.halos[haloID].GC['GroupFirstSub']
-                    + self.halos[haloID].GC['GroupNsubs'],
-                ):
-                    self.__PT_loaded['Subhalo'].add(i)
+            self.__PT_loaded['Subhalo'].update(range(first_sub, first_sub + n_sub))
         else:
             print('The pos and vel of the snapshot particles')
             print('are not in the coordinate system in the original box.')
@@ -475,7 +433,9 @@ class Snapshot(SimSnap):
         for fam, fields in data.items():
             if "ParticleIDs" in fields:
                 particles = target[get_family(fam)]
-                mask = np.isin(particles["iord"], fields["ParticleIDs"])
+                ids = (np.asarray(particles["iord"]), fields["ParticleIDs"])
+                dtype = particle_id_dtype(ids)
+                mask = np.isin(*(values.astype(dtype, copy=False) for values in ids))
                 particles["SubhaloID"][mask] = subhaloID
 
     def load_subhalo(self, subhaloID: int):
@@ -497,6 +457,10 @@ class Snapshot(SimSnap):
                 self.match_subhalo(subhaloID)
             return
         if self._canloadPT:
+            catalog = self._catalog_for_merge("Subhalo", subhaloID)
+            host_id = int(catalog["SubhaloGrNr"])
+            if not 0 <= host_id < self.properties["Halos_total"]:
+                raise ValueError(f"Invalid FoF host {host_id} for Subhalo {subhaloID}")
             self.load_particle_para['particle_field'] = self.load_particle_para[
                 'particle_field'
             ].lower()
@@ -504,22 +468,11 @@ class Snapshot(SimSnap):
                 self.load_particle_para['particle_field']
             )
             f = self.load_particle(ID=subhaloID, groupType='Subhalo', decorate=False, lazy=False)
-
+            if len(f):
+                f["HaloID"][:] = host_id
             fmerge = simsnap_merge(self, f)
-            simsnap_cover(self, fmerge)
-
-            ind = np.empty((len(self),), dtype='int8')
-            for i, f in enumerate(self.ancestor.families()):
-                ind[self._get_family_slice(f)] = i
-            self._family_index_cached = ind
-
-            self.subhalos[subhaloID].load_GC()
-            if len(self):
-                self['HaloID'][self['SubhaloID'] == subhaloID] = self.subhalos[
-                    subhaloID
-                ].GC['SubhaloGrNr']
-            self.subhalos.update()
-            self.halos.update()
+            self._commit_particle_merge(fmerge)
+            self.subhalos._record_loaded(subhaloID, catalog)
             self.__PT_loaded['Subhalo'].add(subhaloID)
             self.__GC_loaded['Subhalo'].add(subhaloID)
         else:
@@ -537,7 +490,7 @@ class Snapshot(SimSnap):
         """Read an independent column in snapshot units, e.g. (12, "star", "mass").
 
         Uses the same file order and disk cache as a standalone load_particle
-        object. Requests only this field on a cache miss.
+        object. A cutout requests the field itself on a cache miss.
         """
         from .TNGapi import CATALOG, PART_TYPE, ZOOM_PART_TYPE
 
@@ -618,6 +571,7 @@ class Snapshot(SimSnap):
                 gas=int(lenType[0]),
                 bh=int(lenType[5]),
                 order=order,
+                class_=_TNGSimSnap,
             )
 
             for party in self.load_particle_para['particle_field'].split(","):
