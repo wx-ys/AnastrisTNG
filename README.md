@@ -109,7 +109,7 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-Halo and subhalo particle reads use official snapshot offsets and share cached blocks of the original HDF5 files. Reading a host can reuse blocks from a previous subhalo read. Catalog and SubLink data also persist across sessions. Version 3.1.0 uses a new particle cache layout and ignores legacy per-object cutout files. Set `progress=False` in `from_api` to hide download progress.
+Halo and subhalo particle reads use official snapshot offsets and share cached blocks of the original HDF5 files. Reading a host can reuse blocks from a previous subhalo read. Catalog and SubLink data also persist across sessions. In 3.1.0, populate the new cache online before replaying data that was previously held in per-object cutouts, catalog or count files, or SubLink arrays. Set `progress=False` in `from_api` to hide download progress.
 
 ## Analysis notebooks
 

@@ -748,7 +748,7 @@ class RemoteSnapshotTest(unittest.TestCase):
                 f["Subhalo/SubLink/" + field] = [value]
         path = base / "trees/SubLink/tree_extended.1.hdf5"
         path.parent.mkdir(parents=True)
-        with h5py.File(path, "w") as f:
+        with h5py.File(path, "w", alignment_threshold=1, alignment_interval=65536) as f:
             f["SubhaloID"] = [300, 301, 302, 303, 304]
             f["FirstProgenitorID"] = [301, 302, -1, -1, -1]
             f["NextProgenitorID"] = [-1, -1, 303, -1, -1]
@@ -757,6 +757,7 @@ class RemoteSnapshotTest(unittest.TestCase):
             f["SnapNum"] = [99, 99, 98, 98, 98]
             f["SubhaloMassType"] = np.ones((5, 6))
             f["SubhaloPos"] = np.arange(15).reshape(5, 3).astype("f4")
+            f["UncachedColumn"] = np.arange(5)
         snap._source.local = str(self.local)
         (snap._source.root.parent / "scale_factors.json").write_text('{"98":0.9}')
         snap._source.offline = True
@@ -764,15 +765,25 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.assertEqual(history["numMergers"], 1)
         np.testing.assert_allclose(history["First-SubhaloPos"][0], np.arange(6, 9) * .9 / .6774)
         np.testing.assert_allclose(history["Next-a"], [.9])
-        reopened = self.remote(local_dir=self.local, offline=True)
+        reopened = self.remote(offline=True)
         again = reopened.merger_history(0, fields=["SubhaloPos"], minMassRatio=.1)
         for key in history:
             np.testing.assert_array_equal(history[key], again[key])
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
+            with self.assertRaisesRegex(RemoteDataError, "Offline cache miss"):
+                reopened._source.merger_tree(0, ["UncachedColumn"])
+            copied = self.local / "trees/SubLink/tree_extended.1.hdf5"
+            copied.parent.mkdir(parents=True)
+            shutil.copyfile(path, copied)
+            np.testing.assert_array_equal(
+                snap._source.merger_tree(0, ["UncachedColumn"])["UncachedColumn"], [1, 2, 3])
+            np.testing.assert_array_equal(
+                reopened._source.merger_tree(0, ["UncachedColumn"])["UncachedColumn"], [1, 2, 3])
             gal = snap.galaxy_evolution(0, fields="SubhaloPos")
             np.testing.assert_array_equal(gal["SnapNum"], [99, 98])
             np.testing.assert_allclose(gal["SubhaloPos"][1], history["First-SubhaloPos"][0])
             self.assertEqual(gal["count"], 2)
+        self.assertFalse((snap._source.root / "subhalos").exists())
 
     def test_evolution_reuses_branch_and_catalog_columns(self):
         snap = self.remote(api_key="test")

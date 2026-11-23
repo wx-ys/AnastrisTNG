@@ -109,7 +109,7 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-Halo 和 subhalo 按官方快照偏移读取粒子，共享原始 HDF5 文件的缓存块。读取宿主时，可以复用之前读取 subhalo 缓存的数据块。星表和 SubLink 数据也可以跨会话复用。3.1.0 采用新的粒子缓存布局，旧版逐对象 cutout 文件会被忽略。在 `from_api` 中设置 `progress=False` 可以关闭下载进度显示。
+Halo 和 subhalo 按官方快照偏移读取粒子，共享原始 HDF5 文件的缓存块。读取宿主时，可以复用之前读取 subhalo 缓存的数据块。星表和 SubLink 数据也可以跨会话复用。升级至 3.1.0 后，旧版逐对象 cutout、星表、计数和 SubLink 数组需要在线重新读取一次，才能用新缓存离线重开。在 `from_api` 中设置 `progress=False` 可以关闭下载进度显示。
 
 ## 分析示例
 

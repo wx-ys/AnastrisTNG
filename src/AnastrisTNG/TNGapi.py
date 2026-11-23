@@ -116,7 +116,7 @@ class _RangeFile(RawIOBase):
         data = lookup()
         if data is not None:
             return data
-        self.source._check_online(f"{self.endpoint} bytes starting at {start}")
+        self._check_available(start)
         with self.lock:
             data = lookup()
             if data is not None:
@@ -137,6 +137,9 @@ class _RangeFile(RawIOBase):
                                        ((start + i, memoryview(data)[i:i+self.block_size])
                                         for i in range(0, len(data), self.block_size)))
             return data
+
+    def _check_available(self, start):
+        self.source._check_online(f"{self.endpoint} bytes starting at {start}")
 
     def fetch(self, start, stop):
         headers = {"Range": f"bytes={start}-{stop - 1}"}
@@ -207,6 +210,33 @@ class _RangeFile(RawIOBase):
             self.position += n
             done += n
         return done
+
+
+class _LocalTreeCacheMiss(RemoteDataError):
+    pass
+
+
+class _LocalTreeRangeFile(_RangeFile):
+    """Copy requested SubLink blocks from a local mirror into a separate cache."""
+
+    def __init__(self, source, filename, db, lock, stream):
+        self.stream = stream
+        if stream is not None:
+            self.disk_size = os.fstat(stream.fileno()).st_size
+        super().__init__(source, filename, None, db, lock)
+
+    def _check_available(self, start):
+        if self.stream is None:
+            raise _LocalTreeCacheMiss(f"Uncached local SubLink block for {self.endpoint} at {start}")
+
+    def fetch(self, start, stop):
+        self.stream.seek(start)
+        size = min(stop, self.disk_size) - start
+        data = self.stream.read(size)
+        if len(data) != size:
+            raise RemoteDataError(f"Incomplete local SubLink block for {self.endpoint}")
+        self.size = self.disk_size
+        return data
 
 
 def _download_forbidden(error):
@@ -341,8 +371,8 @@ class ApiSource:
                 if row is not None:
                     return row[0]
 
-    def _store_object_value(self, kind, number, name, value):
-        if self.offline:
+    def _store_object_value(self, kind, number, name, value, *, local=False):
+        if self.offline and not local:
             return
         path = self.root / "objects.sqlite3"
         if not path.is_file():
@@ -360,13 +390,13 @@ class ApiSource:
             db.execute("INSERT OR IGNORE INTO metadata VALUES (?, ?, ?, ?)",
                        (kind, int(number), name, value))
 
-    def _object_json(self, kind, number, name, read=None):
+    def _object_json(self, kind, number, name, read=None, *, local=False):
         cached = self._object_value(kind, number, name)
         if cached is not None:
             return json.loads(cached)
         if read is not None:
             value = read()
-            self._store_object_value(kind, number, name, json.dumps(value))
+            self._store_object_value(kind, number, name, json.dumps(value), local=local)
             return value
 
     def header(self):
@@ -414,9 +444,16 @@ class ApiSource:
             return
         directory = self.root / "particles" if particles else self.root.parent / "hdf5-blocks"
         path = directory / (filename + ".sqlite3")
-        lock = FileLock(str(path) + ".lock")
         if not path.is_file():
             self._check_online(filename)
+        with self._block_database(path, writable=not self.offline) as result:
+            yield result
+
+    @staticmethod
+    @contextmanager
+    def _block_database(path, *, writable):
+        lock = FileLock(str(path) + ".lock")
+        if writable and not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             with lock:
                 if not path.is_file():
@@ -426,7 +463,7 @@ class ApiSource:
                             db.execute("CREATE TABLE blocks (start INTEGER PRIMARY KEY, data BLOB NOT NULL)")
                             db.commit()
                         os.replace(tmp, path)
-        uri = path.resolve().as_uri() + ("?mode=ro" if self.offline else "?mode=rw")
+        uri = path.resolve().as_uri() + ("?mode=rw" if writable else "?mode=ro")
         with closing(sqlite3.connect(uri, uri=True)) as db:
             yield db, lock
 
@@ -607,14 +644,16 @@ class ApiSource:
                 raise RemoteDataError("Invalid SubLink offsets")
             return [chunk, row - int(starts[chunk]), length, root]
 
-        chunk, row, length, root = self._object_json("Subhalo", number, "sublink-location", locate)
+        chunk, row, length, root = self._object_json("Subhalo", number, "sublink-location", locate,
+                                                    local=self.local is not None)
+        filename = f"sublink.{chunk}.hdf5"
         local = None
         if self.local:
             try:
                 local = treePath(self.local, "SubLink", chunk)
             except ValueError:
                 pass
-        with self._raw_file(f"sublink.{chunk}.hdf5", local) as file:
+        def read(file):
             if int(file["SubhaloID"][row]) != root:
                 raise RemoteDataError("SubLink offsets do not match tree rows")
             size = length
@@ -626,6 +665,27 @@ class ApiSource:
             if any(len(value) != size for value in result.values()):
                 raise RemoteDataError("Incomplete SubLink columns")
             return result
+
+        def read_cached(path, stream=None):
+            with self._block_database(path, writable=stream is not None) as (db, lock):
+                reader = _LocalTreeRangeFile(self, filename, db, lock, stream)
+                with h5py.File(reader, "r") as file:
+                    return read(file)
+
+        # Keep byte ranges from distinct HDF5 layouts in separate caches.
+        directory = self.root.parent / "local-sublink-blocks"
+        if local:
+            with open(local, "rb") as stream:
+                stat = os.fstat(stream.fileno())
+                identity = f"{stat.st_dev:x}-{stat.st_ino:x}-{stat.st_mtime_ns:x}-{stat.st_size:x}"
+                return read_cached(directory / f"{filename}.{identity}.sqlite3", stream)
+        for path in directory.glob(f"{filename}.*.sqlite3"):
+            try:
+                return read_cached(path)
+            except _LocalTreeCacheMiss:
+                pass
+        with self._raw_file(filename) as file:
+            return read(file)
 
     def at_snapshot(self, snap):
         if snap == self.snap:
