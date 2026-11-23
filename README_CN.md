@@ -65,7 +65,7 @@ rho = sub.gas["rho"]
 sub.physical_units()
 ```
 
-首次访问这个 subhalo 的 `rho` 时，未命中缓存只会下载气体的 `Density` 字段。需要气体粒子 ID 时，再读取 `sub.gas["iord"]`。
+访问这个 subhalo 的 `rho` 会读取气体 `Density` 的对应行，缓存缺失时按需下载 HDF5 字节块。需要气体粒子 ID 时，再读取 `sub.gas["iord"]`。
 
 ### 加载 subhalo 和宿主 halo
 
@@ -102,14 +102,14 @@ bh_mass = zoom.bh["mass"]
 
 ### 离线重开缓存数据
 
-在线读取气体密度后，可离线重开同一模拟的同一快照。默认缓存目录是 `~/.cache/AnastrisTNG`。如果指定过 `cache_dir`，重开时使用相同目录即可。
+在线读取气体密度后，可离线重开同一模拟的同一快照。默认缓存目录是 `~/.cache/AnastrisTNG`，首次写入时自动创建。如果指定过 `cache_dir`，重开时使用相同目录即可。
 
 ```python
 offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
-粒子字段、星表列和 SubLink 数据都可以跨会话复用。在 `from_api` 中设置 `progress=False` 可以关闭下载进度显示。
+Halo 和 subhalo 按官方快照偏移读取粒子，共享原始 HDF5 文件的缓存块。读取宿主时，可以复用之前读取 subhalo 缓存的数据块。星表和 SubLink 数据也可以跨会话复用。升级至 3.1.0 后，旧版逐对象 cutout、星表、计数和 SubLink 数组需要在线重新读取一次，才能用新缓存离线重开。在 `from_api` 中设置 `progress=False` 可以关闭下载进度显示。
 
 ## 分析示例
 

@@ -1,4 +1,4 @@
-"""Exercise the public API against the same particles in raw files and API cutouts."""
+"""Compare API reads with local snapshots and public reference cutouts."""
 import io
 import json
 import os
@@ -34,7 +34,6 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.local = root / "TNG50-1" / "output"
         self.cache = root / "cache"
         self.calls = []
-        self.bad_ids = False
         self.dm_mass = 3.07367708626465e-5
         self.samples = {}
         for pt in [0, 1, 4, 5]:
@@ -94,6 +93,18 @@ class RemoteSnapshotTest(unittest.TestCase):
                 for pt, fields in self.samples.items():
                     for name, values in fields.items():
                         file[f"PartType{pt}/{name}"] = values[rows]
+        self.archive = {f"snapshot-99.{chunk}.hdf5":
+                        (self.local / f"snapdir_099/snap_099.{chunk}.hdf5").read_bytes()
+                        for chunk in range(2)}
+        with io.BytesIO() as stream:
+            with h5py.File(stream, "w") as file:
+                file["FileOffsets/SnapByType"] = np.array(
+                    [[0, 2] if pt in self.samples else [0, 0] for pt in range(6)]).T
+                for kind, members in self.members.items():
+                    file[f"FileOffsets/{kind}"] = [0]
+                    file[f"{kind}/SnapByType"] = [
+                        [s.start if pt in self.samples else 0 for pt in range(6)] for s in members]
+            self.archive["offsets.99.hdf5"] = stream.getvalue()
         stack.enter_context(patch("AnastrisTNG.TNGapi.urlopen", side_effect=self.respond))
 
     def respond(self, request, timeout):
@@ -103,6 +114,17 @@ class RemoteSnapshotTest(unittest.TestCase):
             return Response(json.dumps(dict(name="TNG50-1", mass_dm=self.dm_mass, boxsize=35000.,
                                             omega_0=.3089, omega_L=.6911, omega_B=.0486, hubble=.6774,
                                             softening_dm_comoving=.39, softening_dm_max_phys=.195)).encode())
+        if "/files/" in url.path:
+            filename = url.path.rsplit("/", 1)[-1]
+            content = self.archive[filename]
+            start, end = map(int, request.get_header("Range")[6:].split("-"))
+            stop = min(end + 1, len(content))
+            self.calls.append((filename, (start, stop)))
+            response = Response(content[start:stop])
+            response.status = 206
+            response.headers["Content-Range"] = f"bytes {start}-{stop-1}/{len(content)}"
+            response.geturl = lambda: request.full_url
+            return response
         path = url.path.split("/snapshots/99/")[1]
         query = parse_qs(url.query)
         self.calls.append((path, query))
@@ -121,20 +143,41 @@ class RemoteSnapshotTest(unittest.TestCase):
         if endpoint == "info.json":
             fields = {name: values[idx] for name, values in self.catalog[kind].items()}
             return Response(json.dumps({kind: fields}).encode())
-        self.assertEqual(endpoint, "cutout.hdf5")
-        out = io.BytesIO()
-        with h5py.File(out, "w") as file:
-            for fam, names in query.items():
-                pt = {"gas": 0, "dm": 1, "stars": 4, "bhs": 5}[fam]
-                for name in names[0].split(","):
-                    values = self.samples[pt][name][self.members[kind][idx]]
-                    if self.bad_ids and name == "ParticleIDs":
-                        values = np.full_like(values, values[0])
-                    file[f"PartType{pt}/{name}"] = values
-        return Response(out.getvalue())
+        self.fail(f"Unexpected object endpoint: {path}")
 
     def remote(self, **kwargs):
         return Snapshot.from_api("TNG50-1", 99, cache_dir=self.cache, progress=False, **kwargs)
+
+    def test_default_cache_created_on_first_online_write(self):
+        home = self.cache.parent / "home"
+        expected = home / ".cache/AnastrisTNG/TNG50-1/snap_099"
+        with patch("pathlib.Path.home", return_value=home):
+            with self.assertRaisesRegex(RemoteDataError, "Offline cache miss"):
+                Snapshot.from_api("TNG50-1", 99, offline=True, progress=False)
+            self.assertFalse(expected.exists())
+            online = Snapshot.from_api("TNG50-1", 99, api_key="test", progress=False)
+            self.assertEqual(online._source.root, expected)
+            self.assertTrue((expected / "header.json").is_file())
+            self.assertTrue((expected.parent / "simulation.json").is_file())
+
+    def test_snapshot_ranges_shared_across_objects_and_offline(self):
+        snap = self.remote(api_key="test")
+        sub = snap.read_particle_field(0, "gas", "rho")
+        np.testing.assert_array_equal(sub, self.samples[0]["Density"][:2])
+        self.assertEqual([path for path, _ in self.calls if path.startswith("snapshot-")],
+                         ["snapshot-99.0.hdf5"])
+        self.calls.clear()
+        halo = snap.read_particle_field(0, "gas", "rho", groupType="Halo")
+        np.testing.assert_array_equal(halo, self.samples[0]["Density"][:3])
+        self.assertEqual([path for path, _ in self.calls if path.startswith("snapshot-")],
+                         ["snapshot-99.1.hdf5"])
+        self.calls.clear()
+        offline = self.remote(offline=True)
+        np.testing.assert_array_equal(offline.read_particle_field(0, "gas", "rho", groupType="Halo"), halo)
+        np.testing.assert_array_equal(offline.read_particle_field(0, "gas", "rho"), sub)
+        self.assertFalse(self.calls)
+        self.assertFalse((snap._source.root / "halos").exists())
+        self.assertFalse((snap._source.root / "subhalos").exists())
 
     def test_snapshot_header_overrides_catalog_and_run_defaults(self):
         path = self.local / "snapdir_099/snap_099.0.hdf5"
@@ -211,10 +254,12 @@ class RemoteSnapshotTest(unittest.TestCase):
         for chunk in (0, 1):
             with h5py.File(raw / f"groupcat-135.{chunk}.hdf5", "w") as file:
                 file.create_group("Header").attrs.update(
-                    FileOffsets_Group=[0, 2], FileOffsets_Subhalo=[0, 3], FileOffsets_SubLink=[0, 10])
+                    FileOffsets_Group=[0, 2], FileOffsets_Subhalo=[0, 3], FileOffsets_SubLink=[0, 10],
+                    FileOffsets_Snap=np.tile([0, 2], (6, 1)))
                 file["Group/GroupLenType"] = np.ones((2, 6), dtype=int)
                 file["Group/GroupMass"] = [10 + chunk, 20 + chunk]
                 if chunk == 1:
+                    file["Offsets/Group_SnapByType"] = np.tile([[2], [3]], (1, 6))
                     file["Offsets/Subhalo_SublinkSubhaloID"] = [99, 200]
                     file["Offsets/Subhalo_SublinkRowNum"] = [-1, 12]
                     file["Offsets/Subhalo_SublinkLastProgenitorID"] = [99, 202]
@@ -225,7 +270,10 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.assertEqual(source._catalog_row("Group", 3)["GroupMass"], 21)
         fallback = source._catalog_row("Group", 3, download=True)
         self.assertEqual(fallback["GroupMass"], 21)
-        self.assertEqual(source.catalog("Halo", 3)["GroupLenType"], [1] * 6)
+        np.testing.assert_array_equal(source.catalog("Halo", 3)["GroupLenType"], [1] * 6)
+        shutil.copyfile(self.local / "snapdir_099/snap_099.1.hdf5", raw / "snapshot-135.1.hdf5")
+        ids = source.particles("Halo", 3, {"dm": ["ParticleIDs"]})["dm"]["ParticleIDs"]
+        np.testing.assert_array_equal(ids, self.samples[1]["ParticleIDs"][3:4])
         np.testing.assert_array_equal(source.merger_tree(4, ["SnapNum"], only_mpb=True)["SnapNum"], [135, 127])
         np.testing.assert_array_equal(source.merger_tree(4, ["SnapNum"])["SnapNum"], [135, 127, 129])
         with self.assertRaisesRegex(ValueError, "no SubLink tree"):
@@ -239,18 +287,21 @@ class RemoteSnapshotTest(unittest.TestCase):
             requests.append(path)
             if path.endswith("/info.json"):
                 raise HTTPError(request.full_url, 504, "Gateway Time-out", {}, None)
-            if "/files/" in path:
+            if path.endswith("/files/offsets.99.hdf5") and not request.get_header("Range"):
+                content = io.BytesIO(self.archive["offsets.99.hdf5"])
+                with h5py.File(content, "r+") as file:
+                    del file["FileOffsets/Subhalo"]
+                    file["FileOffsets/Subhalo"] = [0, 1]
+                return Response(content.getvalue())
+            if "/files/groupcat-99." in path:
                 filename = path.split("/")[-1]
                 content = io.BytesIO()
                 with h5py.File(content, "w") as file:
-                    if filename == "offsets.99.hdf5":
-                        file["FileOffsets/Subhalo"] = [0, 1]
-                    else:
-                        self.assertIn(filename, ("groupcat-99.0.hdf5", "groupcat-99.1.hdf5"))
-                        i = int(filename.split(".")[1])
-                        file.create_group("Header")
-                        for key, values in self.catalog["Subhalo"].items():
-                            file["Subhalo/" + key] = [values[i]]
+                    self.assertIn(filename, ("groupcat-99.0.hdf5", "groupcat-99.1.hdf5"))
+                    i = int(filename.split(".")[1])
+                    file.create_group("Header")
+                    for key, values in self.catalog["Subhalo"].items():
+                        file["Subhalo/" + key] = [values[i]]
                 return Response(content.getvalue())
             return self.respond(request, timeout)
 
@@ -262,7 +313,9 @@ class RemoteSnapshotTest(unittest.TestCase):
             sub.physical_units()
             self.assertEqual(sub.GC["SubhaloGrNr"], 1)
             self.assertEqual(sum(path.endswith("info.json") for path in requests), 1)
-            self.assertEqual(sum("/files/" in path for path in requests), 3)
+            files = {path.rsplit("/", 1)[-1] for path in requests if "/files/" in path}
+            self.assertEqual(files, {"offsets.99.hdf5", "groupcat-99.0.hdf5", "groupcat-99.1.hdf5",
+                                     "snapshot-99.1.hdf5"})
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
             replay = self.remote(offline=True).load_particle(1)
             np.testing.assert_array_equal(replay.gas["iord"], ids)
@@ -316,7 +369,7 @@ class RemoteSnapshotTest(unittest.TestCase):
             sub.physical_units()
             self.assertEqual(sub.GC["SubhaloGrNr"], 0)
         self.assertEqual(sum(p.endswith("info.json") for p in paths), 2)
-        self.assertEqual(sum("/files/" in p for p in paths), 1)
+        self.assertEqual(sum("/files/groupcat-" in p for p in paths), 1)
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
             np.testing.assert_array_equal(self.remote(offline=True).load_particle(0).gas["rho"], expected)
 
@@ -340,9 +393,8 @@ class RemoteSnapshotTest(unittest.TestCase):
             np.testing.assert_array_equal(snap.gas["SubhaloID"], [1, 0, 0, -1])
             np.testing.assert_array_equal(snap.gas["iord"], self.samples[0]["ParticleIDs"][[3, 0, 1, 2]])
         self.compare(local, online)
-        supplemental = [q for path, q in self.calls if path == "halos/0/cutout.hdf5"
-                        and "Density" in q.get("gas", [""])[0]]
-        self.assertEqual(supplemental, [{"gas": ["Density"]}])
+        self.assertCountEqual([path for path, _ in self.calls if path.startswith("snapshot-")],
+                              ["snapshot-99.0.hdf5", "snapshot-99.1.hdf5"])
         count = len(self.calls)
         for offline in (False, True):
             reused = self.remote(offline=offline)
@@ -357,13 +409,14 @@ class RemoteSnapshotTest(unittest.TestCase):
         sub = snap.load_particle(0)
         self.assertEqual(sub.GC["SubhaloGrNr"], 0)
         np.testing.assert_array_equal(sub.gas["rho"], self.samples[0]["Density"][:2])
+        snap._source.particle_counts("Subhalo", 1)
+        offline = self.remote(offline=True).load_particle(1)
+        with self.assertRaisesRegex(RemoteDataError, "subhalos/1.*gas.Potential.*Offline cache miss"):
+            _ = offline.gas["pot"]
+        self.assertNotIn("pot", offline.gas.keys())
         snap.load_halo(0)
         snap.load_subhalo(0)
         np.testing.assert_array_equal(snap.gas["SubhaloID"], [0, 0, -1])
-        offline = self.remote(offline=True).load_particle(0)
-        with self.assertRaisesRegex(RemoteDataError, "subhalos/0.*gas.Potential"):
-            _ = offline.gas["pot"]
-        self.assertNotIn("pot", offline.gas.keys())
 
     def test_physical_units_and_family_selection(self):
         local = Snapshot(str(self.local), 99)
@@ -379,18 +432,8 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.assertEqual(x.units, y.units)
         self.assertEqual(str(y.units), "Msol kpc**-3")
         np.testing.assert_allclose(x, y, rtol=np.finfo(x.dtype).eps)
-        queries = [q for path, q in self.calls if path.endswith("cutout.hdf5")]
-        self.assertEqual(queries, [{"gas": ["Density"]}])
-
-    def test_inconsistent_cutout_can_retry(self):
-        snap = self.remote(api_key="test").load_particle(0)
-        _ = snap.gas["rho"]
-        self.bad_ids = True
-        with self.assertRaisesRegex(RemoteDataError, "ParticleIDs"):
-            _ = snap.gas["iord"]
-        self.bad_ids = False
-        np.testing.assert_array_equal(snap.gas["iord"], self.samples[0]["ParticleIDs"][:2])
-        self.assertFalse(list(self.cache.rglob("*.part")))
+        self.assertEqual([path for path, _ in self.calls if path.startswith("snapshot-")],
+                         ["snapshot-99.0.hdf5"])
 
     def test_partial_local_output(self):
         snap = self.remote(local_dir=self.local, offline=True)
@@ -402,7 +445,7 @@ class RemoteSnapshotTest(unittest.TestCase):
         snap = self.remote(local_dir=self.local, api_key="test")
         snap.load_halo(0)
         np.testing.assert_array_equal(snap.gas["rho"], self.samples[0]["Density"][:3])
-        self.assertEqual(self.calls, [("halos/0/cutout.hdf5", {"gas": ["Density"]})])
+        self.assertEqual([path for path, _ in self.calls], ["snapshot-99.1.hdf5"])
 
     def test_concurrent_field_fill(self):
         first = self.remote(api_key="test").load_particle(0)
@@ -411,7 +454,7 @@ class RemoteSnapshotTest(unittest.TestCase):
             results = list(pool.map(lambda sub: sub.gas["rho"], [first, second]))
         for result in results:
             np.testing.assert_array_equal(result, self.samples[0]["Density"][:2])
-        self.assertEqual(sum("Density" in str(q) for _, q in self.calls), 1)
+        self.assertEqual(sum(path == "snapshot-99.0.hdf5" for path, _ in self.calls), 1)
 
     def test_catalog_validation_workflow(self):
         online = self.remote(api_key="test")
@@ -419,21 +462,23 @@ class RemoteSnapshotTest(unittest.TestCase):
         sub_id = select_gas_subhalo(online)
         validate_catalogs(self, online, offline, sub_id, verbose=False)
 
-    def test_truncated_download_and_progress_without_length(self):
-        snap = self.remote(api_key="test").load_particle(0)
-        _ = snap.gas["iord"]
+    def test_truncated_range_and_progress_without_length(self):
+        source = self.remote(api_key="test")
+        sub = source.load_particle(0)
+        source._source._particle_offsets("Subhalo", 0)
         def truncated(request, timeout):
             response = self.respond(request, timeout)
-            response.headers["Content-Length"] = str(len(response.getvalue()) + 100)
+            if urlsplit(request.full_url).path.endswith("/snapshot-99.0.hdf5"):
+                response.truncate(len(response.getvalue()) - 10)
             return response
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=truncated):
-            with self.assertRaisesRegex(RemoteDataError, "Incomplete download"):
-                _ = snap.gas["rho"]
+            with self.assertRaisesRegex(RemoteDataError, "Incomplete byte range"):
+                _ = sub.gas["rho"]
         self.assertFalse(list(self.cache.rglob("*.part")))
 
         def no_length(request, timeout):
             response = self.respond(request, timeout)
-            response.headers.clear()
+            response.headers.pop("Content-Length")
             return response
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=no_length), patch("AnastrisTNG.TNGapi.tqdm") as bar:
             reopened = Snapshot.from_api("TNG50-1", 99, cache_dir=self.cache, api_key="test", progress=True)
@@ -454,11 +499,8 @@ class RemoteSnapshotTest(unittest.TestCase):
         density = sub.gas["rho"]
         np.testing.assert_array_equal(density, self.samples[0]["Density"][:2])
         np.testing.assert_array_equal(sub.gas["iord"], self.samples[0]["ParticleIDs"][:2])
-        self.assertEqual([q for path, q in self.calls if path.endswith(".hdf5")],
-                         [{"gas": ["Density"]}, {"gas": ["ParticleIDs"]}])
+        self.assertNotIn("pos", sub.keys())
         pos = sub["pos"]
-        self.assertEqual(set(self.calls[-1][1]), {"gas", "stars", "dm", "bhs"})
-        self.assertEqual(set(v[0] for v in self.calls[-1][1].values()), {"Coordinates"})
         for fam, pt in PART_TYPE.items():
             np.testing.assert_array_equal(getattr(sub, fam)["pos"], self.samples[pt]["Coordinates"][:2])
         self.assertEqual(len(pos), len(sub))
@@ -466,26 +508,33 @@ class RemoteSnapshotTest(unittest.TestCase):
         ids = sub["iord"]
         self.assertEqual(len(ids), len(sub))
         self.assertEqual(ids.dtype, np.uint64)
-        self.assertEqual({fam for _, q in self.calls[before:] for fam in q}, {"dm", "stars", "bhs"})
-        self.assertTrue(all(names == ["ParticleIDs"] for _, q in self.calls[before:] for names in q.values()))
+        self.assertEqual(len(self.calls), before)
         self.assertNotIn("vel", sub.keys())
 
     def test_standalone_configured_fields_and_eager_opt_in(self):
         snap = self.remote(api_key="test")
         snap.load_particle_para["star_fields"] = ["Potential"]
         halo = snap.load_particle(0, groupType="Halo", decorate=False)
-        self.assertEqual(self.calls[-1][1], {"stars": ["Potential"]})
+        self.assertEqual(self.calls[-1][0], "snapshot-99.1.hdf5")
         self.assertNotIn("pos", halo.keys())
         np.testing.assert_array_equal(halo.star["pot"], self.samples[4]["Potential"][:3])
         full = snap.load_particle(1, lazy=False)
         self.assertIn("pos", full.keys())
         self.assertIn("vel", full.keys())
-        self.assertIn("ParticleIDs", self.calls[-1][1]["dm"][0])
+        np.testing.assert_array_equal(full.dm["iord"], self.samples[1]["ParticleIDs"][3:4])
 
     def test_independent_field_omits_ids_and_reopens_offline(self):
         online = self.remote(api_key="test")
+        # A large alignment keeps data from different fields in separate cache blocks.
+        with io.BytesIO() as contents:
+            with h5py.File(contents, "w", alignment_threshold=1, alignment_interval=65536) as file:
+                for field, values in self.samples[4].items():
+                    file[f"PartType4/{field}"] = values[:2]
+                id_offset = file["PartType4/ParticleIDs"].id.get_offset()
+            self.archive["snapshot-99.0.hdf5"] = contents.getvalue()
         mass = online.read_particle_field(0, "star", "mass")
-        self.assertEqual(self.calls[-1][1], {"stars": ["Masses"]})
+        ranges = [bounds for path, bounds in self.calls if path == "snapshot-99.0.hdf5"]
+        self.assertFalse(any(first <= id_offset < last for first, last in ranges))
         local = Snapshot(str(self.local), 99).read_particle_field(0, "star", "Masses")
         self.assertEqual(mass.units, local.units)
         np.testing.assert_array_equal(mass, local)
@@ -507,39 +556,22 @@ class RemoteSnapshotTest(unittest.TestCase):
         np.testing.assert_array_equal(raw, pos)
         self.assertEqual(before, len(self.calls))
 
-    def test_independent_field_partial_local_and_failed_download(self):
+    def test_independent_field_partial_local(self):
         with h5py.File(self.local / "snapdir_099/snap_099.0.hdf5", "r+") as f:
             del f["PartType4/ParticleIDs"]
         local = self.remote(local_dir=self.local, offline=True)
         np.testing.assert_array_equal(local.read_particle_field(0, "star", "mass"),
                                       self.samples[4]["Masses"][:2])
         self.assertFalse(self.calls)
-        remote = self.remote(api_key="test")
-        remote._source.particle_counts("Subhalo", 0)
-        out = io.BytesIO()
-        with h5py.File(out, "w") as f:
-            f["PartType4/Masses"] = [1.]
-        with patch("AnastrisTNG.TNGapi.urlopen", return_value=Response(out.getvalue())):
-            with self.assertRaisesRegex(RemoteDataError, "incomplete field"):
-                remote.read_particle_field(0, "star", "mass")
-        self.assertFalse(list(self.cache.rglob("Masses.hdf5")))
-        self.assertFalse(list(self.cache.rglob("*.part")))
-        np.testing.assert_array_equal(remote.read_particle_field(0, "star", "mass"),
-                                      self.samples[4]["Masses"][:2])
 
-    def test_cached_fields_without_ids_then_merge(self):
+    def test_cached_fields_then_merge(self):
         snap = self.remote(api_key="test")
         sub = snap.load_particle(0)
         mass = sub.star["mass"].copy()
         rho = sub.gas["rho"].copy()
         replay = self.remote(offline=True).load_particle(0)
         np.testing.assert_array_equal(replay.star["mass"], mass)
-        with self.assertRaisesRegex(RemoteDataError, "star.ParticleIDs"):
-            _ = replay.star["iord"]
         snap.load_subhalo(0)
-        stars = self.calls[-1][1]["stars"][0].split(",")
-        self.assertIn("ParticleIDs", stars)
-        self.assertNotIn("Masses", stars)
         gas_ids = snap.gas["iord"].copy()
         snap.load_halo(0)
         for merged in (snap, self.remote(offline=True)):
@@ -550,29 +582,6 @@ class RemoteSnapshotTest(unittest.TestCase):
             np.testing.assert_array_equal(merged.gas["iord"][member], gas_ids)
             np.testing.assert_array_equal(merged.gas["rho"][member], rho)
 
-    def test_legacy_cutouts_and_single_field_cache(self):
-        snap = self.remote(api_key="test")
-        sub = snap.load_particle(0)
-        directory = snap._source.root / "subhalos/0"
-        ids = self.samples[4]["ParticleIDs"][:2]
-        mass = self.samples[4]["Masses"][:2]
-        with h5py.File(directory / "first.hdf5", "w") as f:
-            f["PartType4/ParticleIDs"] = ids
-        with h5py.File(directory / "supplement.hdf5", "w") as f:
-            f["PartType4/ParticleIDs"] = ids[::-1]
-            f["PartType4/Masses"] = mass[::-1]
-        (directory / "fields.json").write_text(json.dumps(
-            {"star": {"ParticleIDs": "first.hdf5", "Masses": "supplement.hdf5"}}))
-        legacy = directory / "single_fields/star"
-        legacy.mkdir(parents=True)
-        with h5py.File(legacy / "Coordinates.hdf5", "w") as f:
-            f["PartType4/Coordinates"] = self.samples[4]["Coordinates"][:2]
-        for obj in (sub, self.remote(offline=True).load_particle(0)):
-            np.testing.assert_array_equal(obj.star["pos"], self.samples[4]["Coordinates"][:2])
-            np.testing.assert_array_equal(obj.star["mass"], mass)
-            np.testing.assert_array_equal(obj.star["iord"], ids)
-        self.assertFalse(any(path.endswith("cutout.hdf5") for path, _ in self.calls))
-
     def test_summary_only_cache_and_deferred_catalog_units(self):
         snap = self.remote(api_key="test")
         sub = snap.load_particle(0)
@@ -580,7 +589,7 @@ class RemoteSnapshotTest(unittest.TestCase):
         sub.physical_units()
         self.assertIn("SubhaloID=0", repr(sub))
         self.assertEqual([path for path, q in self.calls],
-                         ["", "simulation", "subhalos/0/", "subhalos/0/cutout.hdf5"])
+                         ["", "simulation", "subhalos/0/", "offsets.99.hdf5", "snapshot-99.0.hdf5"])
         offline = self.remote(offline=True).load_particle(0)
         offline.physical_units(persistent=True)
         np.testing.assert_array_equal(offline.gas["rho"], rho)
@@ -602,7 +611,7 @@ class RemoteSnapshotTest(unittest.TestCase):
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=incomplete):
             sub = snap.load_particle(0)
         self.assertEqual(len(sub), 8)
-        self.assertFalse(list(self.cache.rglob("counts.json")))
+        self.assertIsNone(snap._source._object_json("Subhalo", 0, "counts"))
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
             self.assertEqual(len(self.remote(offline=True).load_particle(0)), len(sub))
 
@@ -739,7 +748,7 @@ class RemoteSnapshotTest(unittest.TestCase):
                 f["Subhalo/SubLink/" + field] = [value]
         path = base / "trees/SubLink/tree_extended.1.hdf5"
         path.parent.mkdir(parents=True)
-        with h5py.File(path, "w") as f:
+        with h5py.File(path, "w", alignment_threshold=1, alignment_interval=65536) as f:
             f["SubhaloID"] = [300, 301, 302, 303, 304]
             f["FirstProgenitorID"] = [301, 302, -1, -1, -1]
             f["NextProgenitorID"] = [-1, -1, 303, -1, -1]
@@ -748,6 +757,7 @@ class RemoteSnapshotTest(unittest.TestCase):
             f["SnapNum"] = [99, 99, 98, 98, 98]
             f["SubhaloMassType"] = np.ones((5, 6))
             f["SubhaloPos"] = np.arange(15).reshape(5, 3).astype("f4")
+            f["UncachedColumn"] = np.arange(5)
         snap._source.local = str(self.local)
         (snap._source.root.parent / "scale_factors.json").write_text('{"98":0.9}')
         snap._source.offline = True
@@ -755,22 +765,30 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.assertEqual(history["numMergers"], 1)
         np.testing.assert_allclose(history["First-SubhaloPos"][0], np.arange(6, 9) * .9 / .6774)
         np.testing.assert_allclose(history["Next-a"], [.9])
-        snap._source.local = None
-        again = snap.merger_history(0, fields=["SubhaloPos"], minMassRatio=.1)
+        reopened = self.remote(offline=True)
+        again = reopened.merger_history(0, fields=["SubhaloPos"], minMassRatio=.1)
         for key in history:
             np.testing.assert_array_equal(history[key], again[key])
         with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
+            with self.assertRaisesRegex(RemoteDataError, "Offline cache miss"):
+                reopened._source.merger_tree(0, ["UncachedColumn"])
+            copied = self.local / "trees/SubLink/tree_extended.1.hdf5"
+            copied.parent.mkdir(parents=True)
+            shutil.copyfile(path, copied)
+            np.testing.assert_array_equal(
+                snap._source.merger_tree(0, ["UncachedColumn"])["UncachedColumn"], [1, 2, 3])
+            np.testing.assert_array_equal(
+                reopened._source.merger_tree(0, ["UncachedColumn"])["UncachedColumn"], [1, 2, 3])
             gal = snap.galaxy_evolution(0, fields="SubhaloPos")
             np.testing.assert_array_equal(gal["SnapNum"], [99, 98])
             np.testing.assert_allclose(gal["SubhaloPos"][1], history["First-SubhaloPos"][0])
             self.assertEqual(gal["count"], 2)
+        self.assertFalse((snap._source.root / "subhalos").exists())
 
     def test_evolution_reuses_branch_and_catalog_columns(self):
         snap = self.remote(api_key="test")
         source = snap._source
-        directory = source.root / "subhalos/0/sublink"
-        directory.mkdir(parents=True)
-        (directory / "layout.json").write_text("[0, 1, 3, 100]")
+        source._store_object_value("Subhalo", 0, "sublink-location", "[0, 1, 3, 100]")
         (source.root.parent / "scale_factors.json").write_text('{"95":0.8}')
         shard = source.root / "groupcat/sublink.0.hdf5"
         shard.parent.mkdir()
@@ -781,6 +799,8 @@ class RemoteSnapshotTest(unittest.TestCase):
             file["SubhaloGrNr"] = [0, 1, 0, 1]
             file["SubfindID"] = [1, 0, 1, 2]
             file["GroupPos"] = np.arange(12, dtype="f4").reshape(4, 3)
+        self.archive["sublink.0.hdf5"] = shard.read_bytes()
+        shard.unlink()
         def catalog_column(epoch, field, values):
             path = source.at_snapshot(epoch).root / "groupcat/Group" / (field + ".hdf5")
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -792,15 +812,16 @@ class RemoteSnapshotTest(unittest.TestCase):
         source.offline = True
         with self.assertRaisesRegex(ValueError, "no central"):
             snap.halo_evolution(0, fields="GroupMass")
+        source.offline = False
         halo = snap.halo_evolution(1, False, fields=["GroupMass", "GroupPos"])
         np.testing.assert_array_equal(halo["HaloID"], [1, 0])
         np.testing.assert_array_equal(halo["GroupMass"], [4, 3])
-        self.assertFalse((directory / "mpb/GroupMass.npy").exists())
-        np.testing.assert_array_equal(np.load(directory / "mpb/GroupPos.npy"), halo["GroupPos"])
+        np.testing.assert_array_equal(halo["GroupPos"], np.arange(3, 9).reshape(2, 3))
+        self.assertFalse((source.root / "subhalos").exists())
         # Exercise the same positional calls against the original local file layout.
         local_tree = self.local / "trees/SubLink/tree_extended.0.hdf5"
         local_tree.parent.mkdir(parents=True)
-        shutil.copyfile(shard, local_tree)
+        local_tree.write_bytes(self.archive["sublink.0.hdf5"])
         group = self.local / "groups_099/groups_099.0.hdf5"
         with h5py.File(group, "a") as file:
             for k, v in {"RowNum": 1, "LastProgenitorID": 102, "SubhaloID": 100}.items():
@@ -824,7 +845,7 @@ class RemoteSnapshotTest(unittest.TestCase):
             np.testing.assert_array_equal(gal[field], remote_gal[field])
         full = source.merger_tree(0, ["GroupPos"])
         np.testing.assert_array_equal(full["GroupPos"], np.arange(3, 12).reshape(3, 3))
-        shard.unlink()
+        self.assertEqual(sum(path == "sublink.0.hdf5" for path, _ in self.calls), 1)
         again = self.remote(offline=True).halo_evolution(1, fields=["GroupMass", "GroupPos"])
         np.testing.assert_allclose(again["GroupPos"], np.asarray(halo["GroupPos"]) * [[1], [.8]] / .6774)
 
@@ -908,11 +929,9 @@ class PublicRowOrderValidation(unittest.TestCase):
             sub = online.load_particle(12)
             fields = [("mass", "Masses"), ("aform", "GFM_StellarFormationTime"), ("iord", "ParticleIDs")]
             values = {}
-            with patch.object(online._source, "_stream", wraps=online._source._stream) as download:
-                for name, raw in fields:
-                    values[name] = sub.star[name].copy()
-                    self.assertEqual(download.call_args.args[0], "subhalos/12/cutout.hdf5?stars=" + raw)
-                self.assertEqual(download.call_count, len(fields))
+            for name, _ in fields:
+                values[name] = sub.star[name].copy()
+            self.assertFalse((online._source.root / "subhalos").exists())
             query = "subhalos/12/cutout.hdf5?stars=Masses,GFM_StellarFormationTime,ParticleIDs"
             with online._source._open(query, "reference stellar cutout") as response:
                 with h5py.File(io.BytesIO(response.read()), "r") as ref:

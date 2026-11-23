@@ -8,7 +8,7 @@ https://github.com/wx-ys/AnastrisTNG
 
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 from .TNGsimulation import *
 from .TNGtools import *
