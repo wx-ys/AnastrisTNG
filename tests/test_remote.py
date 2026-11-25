@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 import h5py
 import numpy as np
 from dotenv import dotenv_values
+from filelock import FileLock
 
 from AnastrisTNG.TNGapi import API_TYPE, PART_TYPE, RemoteDataError
 from AnastrisTNG.TNGparticlecache import ParticleRowCache
@@ -192,6 +193,35 @@ class RemoteSnapshotTest(unittest.TestCase):
             self.assertEqual(online._source.root, expected)
             self.assertTrue((expected / "header.json").is_file())
             self.assertTrue((expected.parent / "simulation.json").is_file())
+
+    def test_cache_locks_live_in_each_resource_directory(self):
+        with patch("AnastrisTNG.TNGapi.FileLock", wraps=FileLock) as locks:
+            snap = self.remote(api_key="test")
+            density = snap.read_particle_field(0, "gas", "rho")
+            root = snap._source.root
+            group = root / "groupcat" / "Group"
+            self.archive["groupcat-99.0.hdf5"] = (self.local / "groups_099/groups_099.0.hdf5").read_bytes()
+            snap._source._layout(group / "schema.json", lambda: ["GroupMass"])
+            snap._source._column_file(group / "GroupMass.hdf5", "groupcat-99.0.hdf5",
+                                      "Group/GroupMass", 2, raw=True)
+        self.assertEqual({Path(call.args[0]) for call in locks.call_args_list}, {
+            root.parent / ".locks/simulation.json.lock",
+            root / ".locks/header.json.lock",
+            root / ".locks/objects.sqlite3.lock",
+            root / ".locks/particle-cutout-1.lock",
+            root.parent / "hdf5-blocks/.locks/offsets.99.hdf5.sqlite3.lock",
+            root.parent / "hdf5-blocks/.locks/groupcat-99.0.hdf5.sqlite3.lock",
+            group / ".locks/schema.json.lock",
+            group / ".locks/GroupMass.hdf5.lock",
+        })
+
+        # An existing cache with only the data files also opens read-only.
+        data_only = self.cache.parent / "data-only"
+        shutil.copytree(self.cache, data_only, ignore=shutil.ignore_patterns(".locks", "*.lock"))
+        with patch("AnastrisTNG.TNGapi.urlopen", side_effect=AssertionError("unexpected HTTP")):
+            offline = Snapshot.from_api("TNG50-1", 99, cache_dir=data_only, offline=True, progress=False)
+            np.testing.assert_array_equal(offline.read_particle_field(0, "gas", "rho"), density)
+        self.assertFalse(list(data_only.rglob(".locks")))
 
     def test_small_subhalo_field_and_partial_host_miss_use_cutout(self):
         snap = self.remote(api_key="test")
@@ -579,6 +609,26 @@ class RemoteSnapshotTest(unittest.TestCase):
         self.assertEqual(sum(path.endswith("cutout.hdf5") for path, _ in self.calls), 1)
         self.assertEqual(sum(path == "offsets.99.hdf5" for path, _ in self.calls), 1)
         self.assertFalse(any(path.startswith("snapshot-") for path, _ in self.calls))
+
+    def test_different_subhalo_cutout_locks_allow_parallel_downloads(self):
+        from threading import Barrier
+
+        snap = self.remote(api_key="test")
+        both = Barrier(2)
+
+        def serve(request, timeout):
+            path = urlsplit(request.full_url).path
+            if path.endswith("/cutout.hdf5"):
+                both.wait(timeout=5)
+            return self.respond(request, timeout)
+
+        with patch("AnastrisTNG.TNGapi.urlopen", side_effect=serve), ThreadPoolExecutor(2) as pool:
+            reads = [pool.submit(snap.read_particle_field, number, "gas", "rho") for number in (0, 1)]
+            for number, read in enumerate(reads):
+                expected = self.samples[0]["Density"][self.members["Subhalo"][number]]
+                np.testing.assert_array_equal(read.result(), expected)
+        self.assertCountEqual([path for path, _ in self.calls if path.endswith("/cutout.hdf5")],
+                              ["subhalos/0/cutout.hdf5", "subhalos/1/cutout.hdf5"])
 
     def test_standalone_cutout_survives_unavailable_offsets_without_shared_rows(self):
         source = self.remote(api_key="test")._source

@@ -109,6 +109,8 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
+Each cache directory keeps its file locks in a hidden `.locks/` subdirectory, such as `snap_099/.locks/particle-cutout-25.lock`. Existing data can be reused after an upgrade. Once processes using the old version have finished with the shared cache, you can move their leftover `.lock` files into the corresponding `.locks/` directories and start parallel jobs with the new version.
+
 Halo and subhalo particle reads share losslessly compressed rows by official snapshot offsets. The reader combines valid cached rows and local snapshot data, then requests missing fields in one cutout. On a cold read it can start the cutout while looking up offsets. If the offset service is temporarily unavailable, an online read can still return the cutout. Sharing those rows across objects or reopening them offline requires a successful offset lookup.
 
 The progress display reports waits, transferred bytes, cache work and array assembly. For transfers of unknown size it shows bytes and speed. Fast cache hits stay quiet. Set `progress=False` in `from_api` to hide progress.

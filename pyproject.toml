@@ -19,7 +19,7 @@ classifiers = [
 ]
 dependencies = [
   "h5py",
-  "filelock",
+  "filelock>=3.12.3",
   "python-dotenv",
   "numba",
   "numpy",

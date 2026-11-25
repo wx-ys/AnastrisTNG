@@ -109,6 +109,8 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
+每个缓存目录把自己的文件锁放在隐藏子目录 `.locks/` 中，例如 `snap_099/.locks/particle-cutout-25.lock`。升级后可直接复用已有数据。共享缓存的旧版进程结束后，就可以把遗留的 `.lock` 文件移入各自的 `.locks/`，再用新版启动并行任务。
+
 Halo 和 subhalo 按官方快照偏移共享无损压缩的粒子行。程序先复用有效缓存和本地快照，再用一次 cutout 请求缺失字段。冷读时可以同时下载 cutout 和查询偏移。偏移服务临时不可用时，在线读取仍可返回 cutout 中的数据。要跨对象共享这些行或离线重开，需要成功获取偏移。
 
 进度显示覆盖等待响应、传输、读写缓存和组装数组。下载大小未知时显示已传字节和速率，快速缓存命中时保持安静。在 `from_api` 中设置 `progress=False` 可以关闭进度显示。

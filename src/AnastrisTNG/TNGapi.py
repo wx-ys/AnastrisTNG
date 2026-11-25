@@ -552,6 +552,10 @@ def _copy_response(response, write, bar, total, incomplete_message):
             progress.reserve(written - total)
 
 
+def _cache_lock(path):
+    return FileLock(str(path.parent / ".locks" / (path.name + ".lock")))
+
+
 @contextmanager
 def temporary_path(destination):
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -740,7 +744,7 @@ class ApiSource:
             return json.loads(path.read_text(encoding="utf8"))
         self._check_online(resource)
         directory.mkdir(parents=True, exist_ok=True)
-        with FileLock(str(path) + ".lock"):
+        with _cache_lock(path):
             if path.is_file():
                 return json.loads(path.read_text(encoding="utf8"))
             value = self._fetch_json(endpoint, resource, validate)
@@ -784,7 +788,7 @@ class ApiSource:
         path = self.root / "objects.sqlite3"
         if not path.is_file():
             self.root.mkdir(parents=True, exist_ok=True)
-            with FileLock(str(path) + ".lock"):
+            with _cache_lock(path):
                 if not path.is_file():
                     with temporary_path(path) as tmp:
                         with closing(sqlite3.connect(tmp)) as db, db:
@@ -882,7 +886,7 @@ class ApiSource:
     @staticmethod
     @contextmanager
     def _block_database(path, *, writable):
-        lock = FileLock(str(path) + ".lock")
+        lock = _cache_lock(path)
         if writable and not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
             with lock:
@@ -949,7 +953,7 @@ class ApiSource:
     def _layout(self, path, read):
         if not path.is_file():
             path.parent.mkdir(parents=True, exist_ok=True)
-            with FileLock(str(path) + ".lock"):
+            with _cache_lock(path):
                 if not path.is_file():
                     write_json(path, read())
         return json.loads(path.read_text(encoding="utf8"))
@@ -961,7 +965,7 @@ class ApiSource:
         if not path.is_file():
             self._check_online(dataset)
             path.parent.mkdir(parents=True, exist_ok=True)
-            with FileLock(str(path) + ".lock"):
+            with _cache_lock(path):
                 if not path.is_file():
                     with temporary_path(path) as tmp:
                         if raw:
@@ -1796,7 +1800,7 @@ class ApiSource:
                 lengths = {(fam, name): int(counts[PART_TYPE[fam]]) for fam, names in request.items()
                            for name in names}
                 slot = (2 * int(number) + (kind == "Subhalo")) % 64
-                lock = FileLock(str(self.root / f"particle-cutout-{slot}.lock"))
+                lock = _cache_lock(self.root / f"particle-cutout-{slot}")
                 offsets = self._object_json(kind, number, "particle-offsets")
                 prefetched = None
                 if offsets is None and not self.offline and not self._has_particle_shards():
