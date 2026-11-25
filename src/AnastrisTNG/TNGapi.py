@@ -170,11 +170,13 @@ class _NotebookProgressBar(tqdm):
         labels = "".join(f'<text x="{x}" y="{19 + 16 * i}">{escape(line)}</text>'
                          for i, (x, line) in enumerate(lines))
         svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="660" height="{height}" '
-               f'viewBox="0 0 660 {height}" role="img"><title>{escape(label)}</title>'
+               f'viewBox="0 0 660 {height}" role="img" aria-label="{escape(label)}"><title>{escape(label)}</title>'
                f'<rect width="660" height="{height}" rx="5" fill="#f8fafc"/>'
                f'<rect x="10" y="10" width="{track_width}" height="10" rx="5" fill="#dbe1e7"/>{fill}'
                f'<g font-family="monospace" font-size="12" fill="#1f2937">{labels}</g></svg>')
-        return {"image/svg+xml": svg, "text/plain": label}
+        # GitHub's notebook converter preserves Unicode in inline HTML SVG.
+        # Both renderers receive the exact same image in one display output.
+        return {"image/svg+xml": svg, "text/html": svg, "text/plain": label}
 
     def _publish(self, now, status=""):
         frame = self._frame(now, status)

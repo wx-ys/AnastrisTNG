@@ -1615,14 +1615,15 @@ class RemoteSnapshotTest(unittest.TestCase):
             self.assertEqual(bar.set_postfix_str.call_args.args, ("Complete",))
         np.testing.assert_array_equal(result["star"]["Masses"], first["star"]["Masses"])
 
-    @staticmethod
-    def last_svg(display):
+    def last_svg(self, display):
         # A short operation publishes its final image directly. A longer one
         # updates the original image via its display handle.
         bundle = display.mock_calls[-1].args[0]
+        self.assertEqual(bundle.get("text/html"), bundle["image/svg+xml"])
         svg = ElementTree.fromstring(bundle["image/svg+xml"])
-        assert svg.tag == "{http://www.w3.org/2000/svg}svg"
-        assert svg.find("{*}title").text == bundle["text/plain"]
+        self.assertEqual(svg.tag, "{http://www.w3.org/2000/svg}svg")
+        self.assertEqual(svg.find("{*}title").text, bundle["text/plain"])
+        self.assertEqual(svg.get("aria-label"), bundle["text/plain"])
         return svg
 
     def test_notebook_progress_matches_known_and_unknown_response_lengths(self):
