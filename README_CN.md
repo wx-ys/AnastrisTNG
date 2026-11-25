@@ -109,9 +109,11 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
+每个缓存目录把自己的文件锁放在隐藏子目录 `.locks/` 中，例如 `snap_099/.locks/particle-cutout-25.lock`。升级后可直接复用已有数据。共享缓存的旧版进程结束后，就可以把遗留的 `.lock` 文件移入各自的 `.locks/`，再用新版启动并行任务。
+
 Halo 和 subhalo 按官方快照偏移共享无损压缩的粒子行。程序先复用有效缓存和本地快照，再用一次 cutout 请求缺失字段。冷读时可以同时下载 cutout 和查询偏移。偏移服务临时不可用时，在线读取仍可返回 cutout 中的数据。要跨对象共享这些行或离线重开，需要成功获取偏移。
 
-进度显示覆盖等待响应、传输、读写缓存和组装数组。下载大小未知时显示已传字节和速率，快速缓存命中时保持安静。在 `from_api` 中设置 `progress=False` 可以关闭进度显示。
+在 Jupyter 和 VS Code 的 notebook 中，每个 API 操作原位更新一张 SVG 进度条。保存 notebook 时会保留当时的图像，GitHub 静态预览也能显示。图中列出该操作的耗时、请求数或已接收的字节数，有传输数据时还会显示平均速率。点状条表示总量未知，绿色表示完成。失败和中断时会保留当时的计数和状态。并发请求分别计时，快速缓存命中保持安静。在 `from_api` 中设置 `progress=False` 可以关闭进度显示。 [查看 Subhalo 12 的实际进度图](examples/AnastrisTNG_api_progress.ipynb)。
 
 共享粒子行缓存中新写入的块都带校验和。遇到损坏的块时，程序可从本地镜像或 cutout 修复相应的行，其余有效块继续复用。旧版未压缩块仍可读取，并按形状和字节数校验。
 

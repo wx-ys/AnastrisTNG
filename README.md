@@ -109,9 +109,11 @@ offline = Snapshot.from_api("TNG50-4", 99, offline=True)
 rho = offline.load_particle(22842).gas["rho"]
 ```
 
+Each cache directory keeps its file locks in a hidden `.locks/` subdirectory, such as `snap_099/.locks/particle-cutout-25.lock`. Existing data can be reused after an upgrade. Once processes using the old version have finished with the shared cache, you can move their leftover `.lock` files into the corresponding `.locks/` directories and start parallel jobs with the new version.
+
 Halo and subhalo particle reads share losslessly compressed rows by official snapshot offsets. The reader combines valid cached rows and local snapshot data, then requests missing fields in one cutout. On a cold read it can start the cutout while looking up offsets. If the offset service is temporarily unavailable, an online read can still return the cutout. Sharing those rows across objects or reopening them offline requires a successful offset lookup.
 
-The progress display reports waits, transferred bytes, cache work and array assembly. For transfers of unknown size it shows bytes and speed. Fast cache hits stay quiet. Set `progress=False` in `from_api` to hide progress.
+Jupyter and VS Code notebooks show one SVG progress bar per API operation. The same image updates in place and the saved notebook retains its latest frame for GitHub previews. The bar shows the operation’s elapsed time, the number of requests or bytes received, and the transfer rate when available. A dotted track means the total size is unknown. A green bar marks completion. Failed and interrupted reads retain their last counts and status. Concurrent requests are timed separately. Fast cache hits stay quiet. Set `progress=False` in `from_api` to hide progress. [View the saved progress for Subhalo 12](examples/AnastrisTNG_api_progress.ipynb).
 
 New blocks in the shared particle row cache include a checksum. The reader can repair damaged rows from a local mirror or cutout and reuse the other blocks. Older uncompressed blocks remain readable and can be checked for shape and byte length.
 
