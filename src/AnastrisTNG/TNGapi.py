@@ -11,10 +11,12 @@ from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack, closing, contextmanager, nullcontext
 from email.utils import parsedate_to_datetime
+from html import escape
 from http.client import HTTPException, IncompleteRead
 from io import BytesIO, RawIOBase
 from pathlib import Path
 from socket import EAI_AGAIN
+from textwrap import wrap
 from threading import Event, RLock, Thread
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urljoin, urlsplit
@@ -26,11 +28,11 @@ from filelock import FileLock
 from dotenv import dotenv_values
 from tqdm import tqdm
 
-_IN_NOTEBOOK = "ipykernel.zmqshell" in sys.modules
-if _IN_NOTEBOOK:
-    from tqdm.notebook import IProgress
-    if IProgress is not None:
-        from tqdm.auto import tqdm
+_notebook_display = None
+if "ipykernel.zmqshell" in sys.modules:
+    from IPython import get_ipython
+    if getattr(get_ipython(), "kernel", None) is not None:
+        from IPython.display import display as _notebook_display
 
 from .illustris_python.groupcat import gcPath, offsetPath, loadSingle
 from .illustris_python.sublink import loadTree, treePath
@@ -112,17 +114,101 @@ class _IncompleteTransfer(HTTPException):
     """The response body ended before the declared byte count."""
 
 
-def _set_byte_total(bar, total):
-    bar.total = total
-    if _IN_NOTEBOOK and hasattr(bar, "container"):
-        # tqdm's notebook widget keeps its original maximum when .total
-        # changes. Hide that gauge while only a byte count and rate are known.
-        indicator = bar.container.children[1]
-        indicator.layout.display = "none" if total is None else None
-        if total is not None:
-            indicator.max = max(1, total)
-            indicator.layout.width = None
-            indicator.bar_style = ""
+class _NotebookProgressBar(tqdm):
+    """Update one self-contained SVG per operation, including its final frame."""
+
+    def __init__(self, *, started=None, **options):
+        super().__init__(gui=True, disable=False, mininterval=0.2, **options)
+        now = time.monotonic()
+        self._started = now if started is None else started
+        self._last_display = self._started
+        self._closed = Event()
+        # VS Code may still be clearing a previous run's outputs. Register the
+        # display ID on the first throttled refresh, or publish the final image
+        # directly if the operation finishes before then.
+        self._handle = None
+        # Particle reads already refresh their bar while waiting or assembling rows.
+        if started is None:
+            Thread(target=self._refresh_waiting, daemon=True).start()
+
+    def _frame(self, now, status=""):
+        elapsed = now - self._started
+        rate = ""
+        if self.unit == "B":
+            total = self.format_sizeof(self.total, suffix="B") if self.total is not None else "?"
+            amount = f"{self.format_sizeof(self.n, suffix='B')}/{total}"
+            if self.n and elapsed > 0:
+                rate = self.format_sizeof(self.n / elapsed, suffix="B/s")
+        else:
+            amount = f"{self.n}/{self.total} {self.unit}"
+
+        phase = status or self.postfix or ("Reading" if self.n else "Waiting")
+        color = {"Complete": "#237a43", "Interrupted": "#a35411", "Failed": "#b42318"}.get(
+            phase.split()[0], "#2474ac")
+        track_width = 136
+        percent = ""
+        fraction = None
+        if self.total:
+            fraction = min(1., self.n / self.total)
+            percent = f"{min(100, int(100 * self.n // self.total))}%"
+        elif self.total == 0 or status == "Complete":
+            fraction = float(status == "Complete")
+            if self.total == 0:
+                percent = f"{fraction:.0%}"
+        if fraction is not None:
+            fill = f'<rect x="10" y="10" width="{track_width * fraction:.2f}" height="10" rx="5" fill="{color}"/>'
+        else:
+            # A dotted track denotes an unknown total, also in a saved frame.
+            fill = (f'<line x1="15" x2="{10 + track_width - 5}" y1="15" y2="15" stroke="{color}" '
+                    'stroke-width="3" stroke-linecap="round" stroke-dasharray="1 8"/>')
+
+        metrics = " · ".join(filter(None, (percent, phase, amount, f"{elapsed:.2f} s", rate)))
+        label = f"{metrics} · {self.desc}"
+        lines = [(156, line) for line in wrap(metrics, width=66)]
+        lines.extend((10, line) for line in wrap(self.desc, width=86))
+        height = 12 + 16 * len(lines)
+        labels = "".join(f'<text x="{x}" y="{19 + 16 * i}">{escape(line)}</text>'
+                         for i, (x, line) in enumerate(lines))
+        svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="660" height="{height}" '
+               f'viewBox="0 0 660 {height}" role="img"><title>{escape(label)}</title>'
+               f'<rect width="660" height="{height}" rx="5" fill="#f8fafc"/>'
+               f'<rect x="10" y="10" width="{track_width}" height="10" rx="5" fill="#dbe1e7"/>{fill}'
+               f'<g font-family="monospace" font-size="12" fill="#1f2937">{labels}</g></svg>')
+        return {"image/svg+xml": svg, "text/plain": label}
+
+    def _publish(self, now, status=""):
+        frame = self._frame(now, status)
+        if self._handle is None:
+            self._handle = _notebook_display(frame, raw=True, display_id=True)
+        else:
+            self._handle.update(frame, raw=True)
+
+    def display(self, msg=None, pos=None):
+        now = time.monotonic()
+        if not self._closed.is_set() and now - self._last_display >= self.mininterval:
+            self._last_display = now
+            self._publish(now)
+
+    def _refresh_waiting(self):
+        interval = self.mininterval
+        while not self._closed.wait(interval):
+            self.refresh()
+            interval = 1.0
+
+    def __exit__(self, exc_type, exc, traceback):
+        status = "Complete"
+        if exc is not None:
+            status = "Interrupted" if isinstance(exc, KeyboardInterrupt) else "Failed"
+            if self.postfix and self.postfix != status:
+                status += f" ({self.postfix})"
+        try:
+            # Synchronize with tqdm.refresh so a background tick cannot overwrite
+            # the final frame. Always publish it, even immediately after an update.
+            with self.get_lock():
+                self._closed.set()
+                self._publish(time.monotonic(), status)
+        finally:
+            super().__exit__(exc_type, exc, traceback)
 
 
 class _ParticleProgress:
@@ -130,6 +216,7 @@ class _ParticleProgress:
 
     def __init__(self, source, stack, description):
         self.source, self.description = source, description
+        self.started = time.monotonic()
         self.bar = None
         self.transports = set()
         self.expected = self.received = 0
@@ -147,7 +234,7 @@ class _ParticleProgress:
             if self._closed.is_set() or self.bar is not None or self.source.progress is False:
                 return
             self.bar = self._bars.enter_context(
-                self.source._progress(self.description, total=None, unit="B", unit_scale=True))
+                self.source._progress(self.description, total=None, unit="B", unit_scale=True, started=self.started))
             if self.stage:
                 self.bar.set_postfix_str(self.stage)
 
@@ -163,20 +250,24 @@ class _ParticleProgress:
                 # The previous transfer may be at 100% while validation or a
                 # database write still has to finish. reserve() sets the next
                 # known transfer size, complete() marks the whole operation.
-                _set_byte_total(self.bar, None)
+                self.bar.total = None
                 self.bar.set_postfix_str(stage)
-            if self._monitor is None and (self.source.progress is True or _IN_NOTEBOOK or sys.stderr.isatty()):
+            if self._monitor is None and (
+                self.source.progress is True or _notebook_display is not None or sys.stderr.isatty()
+            ):
                 self._monitor = Thread(target=self._refresh_slow, daemon=True)
                 self._monitor.start()
 
     def _refresh_slow(self):
-        if self._closed.wait(0.5):
-            return
-        self.start()
-        while not self._closed.wait(1.0):
+        interval = 0.5
+        while not self._closed.wait(interval):
             with self._lock:
-                if self.bar is not None and not self._closed.is_set():
+                if self._closed.is_set():
+                    return
+                self.start()
+                if self.bar is not None:
                     self.bar.refresh()
+            interval = 1.0
 
     @contextmanager
     def waiting(self, resource):
@@ -184,7 +275,7 @@ class _ParticleProgress:
             self.start()
             self.pending += 1
             if self.bar is not None:
-                _set_byte_total(self.bar, None)
+                self.bar.total = None
             self.phase(f"Waiting for {resource}")
         try:
             yield
@@ -192,7 +283,7 @@ class _ParticleProgress:
             with self._lock:
                 self.pending -= 1
 
-    def reserve(self, size):
+    def reserve(self, size, *, refresh=True):
         if self.source.progress is False:
             return
         with self._lock:
@@ -200,8 +291,8 @@ class _ParticleProgress:
                 self.unknown_length = True
             else:
                 self.expected += size
-            if self.bar is not None:
-                _set_byte_total(self.bar, None if self.unknown_length or self.pending else self.expected)
+            if self.bar is not None and refresh:
+                self.bar.total = None if self.unknown_length or self.pending else self.expected
                 self.bar.refresh()
 
     def update(self, size):
@@ -222,7 +313,7 @@ class _ParticleProgress:
     def complete(self):
         with self._lock:
             if self.bar is not None:
-                _set_byte_total(self.bar, None if self.unknown_length or not self.received else self.received)
+                self.bar.total = None if self.unknown_length or not self.received else self.received
                 self.bar.set_postfix_str("Complete")
 
     def _close(self, exc_type, exc, traceback):
@@ -231,8 +322,6 @@ class _ParticleProgress:
             if exc is not None and self.bar is not None:
                 self.bar.set_postfix_str("Interrupted" if exc_type is KeyboardInterrupt else "Failed")
             self._bars.__exit__(exc_type, exc, traceback)
-            if exc is not None and _IN_NOTEBOOK and hasattr(self.bar, "container"):
-                self.bar.container.children[1].bar_style = "danger"
 
 
 class _RangeFile(RawIOBase):
@@ -549,7 +638,9 @@ def _copy_response(response, write, bar, total, incomplete_message):
             raise _IncompleteTransfer(f"{incomplete_message} ({written} of {total} bytes)")
     finally:
         if progress is not None and total is not None and written != total:
-            progress.reserve(written - total)
+            # Adjust the next attempt's budget without moving the on-screen
+            # target down to the bytes received if the transfer stops here.
+            progress.reserve(written - total, refresh=False)
 
 
 def _cache_lock(path):
@@ -1749,14 +1840,11 @@ class ApiSource:
         self._describe_catalog_fields(kind, [field])
         return self._catalog_array(field, value, with_units=True)
 
-    def _progress(self, description, **options):
-        disable = self.progress is False
-        if self.progress == "auto" and not _IN_NOTEBOOK:
-            disable = None  # Let tqdm detect interactive terminals.
-        bar = tqdm(desc=description, disable=disable, **options)
-        if options.get("unit") == "B" and options.get("total") is None:
-            _set_byte_total(bar, None)
-        return bar
+    def _progress(self, description, *, started=None, **options):
+        if _notebook_display is not None and self.progress is not False:
+            return _NotebookProgressBar(desc=description, started=started, **options)
+        disable = None if self.progress == "auto" else not self.progress
+        return tqdm(desc=description, disable=disable, **options)
 
     def _stream(self, endpoint, resource, path, *, progress=None):
         if progress is not None:
@@ -1766,7 +1854,7 @@ class ApiSource:
             def save(response):
                 total = _response_length(response, resource)
                 if progress is None:
-                    _set_byte_total(bar, None if total is None else bar.n + total)
+                    bar.total = None if total is None else bar.n + total
                     bar.set_description_str(resource)
                 else:
                     progress.phase("Downloading cutout")

@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlsplit
+from xml.etree import ElementTree
 
 import h5py
 import numpy as np
@@ -1614,18 +1615,26 @@ class RemoteSnapshotTest(unittest.TestCase):
             self.assertEqual(bar.set_postfix_str.call_args.args, ("Complete",))
         np.testing.assert_array_equal(result["star"]["Masses"], first["star"]["Masses"])
 
+    @staticmethod
+    def last_svg(display):
+        # A short operation publishes its final image directly. A longer one
+        # updates the original image via its display handle.
+        bundle = display.mock_calls[-1].args[0]
+        svg = ElementTree.fromstring(bundle["image/svg+xml"])
+        assert svg.tag == "{http://www.w3.org/2000/svg}svg"
+        assert svg.find("{*}title").text == bundle["text/plain"]
+        return svg
+
     def test_notebook_progress_matches_known_and_unknown_response_lengths(self):
-        from tqdm.notebook import IProgress, tqdm as notebook_bar
-        if IProgress is None:
-            self.skipTest("ipywidgets is optional")
         source = self.remote(api_key="test")._source
         counts = source.particle_counts("Subhalo", 0)
         source._particle_offsets("Subhalo", 0)
         source.progress = True
         meters = []
+        progress = source._progress
 
-        def create(**kwargs):
-            meter = notebook_bar(display=False, **kwargs)
+        def create(*args, **kwargs):
+            meter = progress(*args, **kwargs)
             meters.append(meter)
             return meter
 
@@ -1638,21 +1647,106 @@ class RemoteSnapshotTest(unittest.TestCase):
 
         def check_write(cache, *args, **kwargs):
             self.assertIsNone(meters[-1].total, "cache writes still have work to do after download")
-            self.assertEqual(meters[-1].container.children[1].layout.display, "none")
             return store(cache, *args, **kwargs)
 
         with ExitStack() as stack:
-            stack.enter_context(patch("AnastrisTNG.TNGapi._IN_NOTEBOOK", True))
-            stack.enter_context(patch("AnastrisTNG.TNGapi.tqdm", side_effect=create))
+            display = stack.enter_context(patch("AnastrisTNG.TNGapi._notebook_display"))
+            stack.enter_context(patch.object(source, "_progress", side_effect=create))
             stack.enter_context(patch.object(ParticleRowCache, "store", check_write))
             source.particles("Subhalo", 0, {"star": ["Masses"]}, counts=counts)
+            known = self.last_svg(display)
             with patch("AnastrisTNG.TNGapi.urlopen", side_effect=without_length):
                 source.particles("Subhalo", 0, {"star": ["Coordinates"]}, counts=counts)
-        known, unknown = meters
-        self.assertEqual(known.container.children[1].max, known.n)
-        self.assertEqual(known.total, known.n)
-        self.assertIsNone(unknown.total)
-        self.assertEqual(unknown.container.children[1].layout.display, "none")
+            unknown = self.last_svg(display)
+        self.assertEqual(display.call_count, 2)
+        self.assertEqual(meters[0].total, meters[0].n)
+        self.assertIsNone(meters[1].total)
+        for svg in (known, unknown):
+            self.assertIn("Complete", svg.find("{*}title").text)
+            track, fill = svg.findall("{*}rect")[-2:]
+            self.assertEqual(float(fill.get("width")), float(track.get("width")))
+        self.assertIn("100%", known.find("{*}title").text)
+        self.assertIn("/?", unknown.find("{*}title").text)
+        self.assertNotIn("%", unknown.find("{*}title").text)
+
+    def test_notebook_updates_one_svg_and_retains_elapsed_time_and_partial_bytes(self):
+        source = self.remote(api_key="test")._source
+        source.progress = "auto"
+        clock = [10.]
+        with patch("AnastrisTNG.TNGapi._notebook_display") as display, \
+             patch("AnastrisTNG.TNGapi.time.monotonic", side_effect=lambda: clock[0]):
+            update = display.return_value.update
+            name = 'cutout <gas> & "stars"'
+            with source._progress(name, total=20_000_000, unit="B", started=10.) as bar:
+                # VS Code can still be clearing this cell's previous output.
+                clock[0] = 10.03
+                bar.refresh()
+                display.assert_not_called()
+                clock[0] = 11.
+                bar.update(12_000_000)
+                bar.refresh()
+                display.assert_called_once()
+                self.assertEqual(display.call_args.kwargs, {"raw": True, "display_id": True})
+                live = self.last_svg(display)
+                title = live.find("{*}title").text
+                for value in ("60%", "12.0MB/20.0MB", "1.00 s", name):
+                    self.assertIn(value, title)
+                track, fill = live.findall("{*}rect")[-2:]
+                self.assertAlmostEqual(float(fill.get("width")) / float(track.get("width")), 0.6)
+                for _ in range(10):
+                    bar.refresh()
+                update.assert_not_called()
+                bar.update(8_000_000)
+            update.assert_called_once()
+            self.assertEqual(update.call_args.kwargs, {"raw": True})
+            final = self.last_svg(display)
+            for value in ("100%", "20.0MB/20.0MB", "1.00 s", "Complete"):
+                self.assertIn(value, final.find("{*}title").text)
+            display.assert_called_once()
+
+            for error, status in ((RemoteDataError("partial transfer"), "Failed"), (KeyboardInterrupt(), "Interrupted")):
+                display.reset_mock()
+                with self.assertRaises(type(error)):
+                    with source._progress("cutout", total=20, unit="B", started=clock[0]) as bar:
+                        bar.update(12)
+                        raise error
+                display.assert_called_once()
+                update.assert_not_called()
+                partial = self.last_svg(display)
+                self.assertIn(status, partial.find("{*}title").text)
+                self.assertIn("60%", partial.find("{*}title").text)
+                self.assertNotEqual(partial.findall("{*}rect")[-1].get("fill"), fill.get("fill"))
+
+            display.reset_mock()
+            source.progress = False
+            with source._progress("hidden", total=1, unit="request"):
+                pass
+            display.assert_not_called()
+
+    def test_interrupted_cutout_keeps_the_announced_byte_total(self):
+        source = self.remote(api_key="test")._source
+        counts = source.particle_counts("Subhalo", 0)
+        source._particle_offsets("Subhalo", 0)
+        source.progress = True
+
+        def interrupted(request, timeout):
+            response = self.respond(request, timeout)
+            half = int(response.headers["Content-Length"]) // 2
+
+            def read(size):
+                if response.tell():
+                    raise KeyboardInterrupt
+                return response.read(min(size, half))
+
+            response.read1 = read
+            return response
+
+        with patch("AnastrisTNG.TNGapi._notebook_display") as display, \
+             patch("AnastrisTNG.TNGapi.urlopen", side_effect=interrupted), self.assertRaises(KeyboardInterrupt):
+            source.particles("Subhalo", 0, {"gas": ["Density"]}, counts=counts)
+        frame = self.last_svg(display).find("{*}title").text
+        for value in ("50%", "Interrupted"):
+            self.assertIn(value, frame)
 
     def test_standalone_lazy_fields(self):
         snap = self.remote(api_key="test")
